@@ -3,12 +3,9 @@ import { Database } from 'bun:sqlite';
 import { DatabaseService } from '../../src/services/DatabaseService';
 import type { TsaSymbol, NamedRef } from '../../src/types/common';
 
-function makeDb(): DatabaseService {
-  const db = new Database(':memory:');
-  const svc = new DatabaseService(db);
-  svc.initialize();
-  return svc;
-}
+const _db = new Database(':memory:');
+const sharedSvc = new DatabaseService(_db);
+sharedSvc.initialize();
 
 const BASE_SYMBOL: TsaSymbol = {
   name: 'TestClass',
@@ -26,11 +23,7 @@ const BASE_SYMBOL: TsaSymbol = {
 };
 
 describe('DatabaseService', () => {
-  let svc: DatabaseService;
-
-  beforeAll(() => {
-    svc = makeDb();
-  });
+  const svc = sharedSvc;
 
   beforeEach(() => {
     svc.deleteFileSymbols('/proj/src/test.ts');
@@ -98,10 +91,9 @@ describe('DatabaseService', () => {
 });
 
 describe('DatabaseService — reference methods', () => {
-  let svc: DatabaseService;
+  const svc = sharedSvc;
 
   beforeAll(() => {
-    svc = makeDb();
     svc.insertSymbols([
       BASE_SYMBOL,
       { ...BASE_SYMBOL, name: 'callerFn', kind: 'function' as const, file_path: '/proj/src/caller.ts' },
