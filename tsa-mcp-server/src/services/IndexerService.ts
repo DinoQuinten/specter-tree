@@ -17,7 +17,9 @@ export interface FlushResult {
 /**
  * @class IndexerService
  * @description Orchestrates file watching, debounced re-indexing, and full project scans.
- * Delegates AST work to ParserService and storage to DatabaseService.
+ * scanProject uses a two-pass strategy: index all symbols first, then resolve all references.
+ * This ensures cross-file call graph edges resolve correctly regardless of file order.
+ * Known limitation: incremental re-index (single file) only rebuilds that file's outgoing refs.
  */
 export class IndexerService extends BaseService {
   private readonly db: DatabaseService;
@@ -25,21 +27,12 @@ export class IndexerService extends BaseService {
   private readonly pendingDebounce = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly DEBOUNCE_MS = 300;
 
-  /**
-   * @param db DatabaseService instance
-   * @param parser ParserService instance
-   */
   constructor(db: DatabaseService, parser: ParserService) {
     super('IndexerService');
     this.db = db;
     this.parser = parser;
   }
 
-  /**
-   * Schedule a debounced re-index for a file.
-   * Editors fire 2-3 chokidar events per save — debounce ensures single re-index.
-   * @param filePath File that changed
-   */
   scheduleReindex(filePath: string): void {
     const existing = this.pendingDebounce.get(filePath);
     if (existing) clearTimeout(existing);
@@ -53,35 +46,18 @@ export class IndexerService extends BaseService {
   }
 
   /**
-   * Immediately re-index a file, bypassing debounce.
-   * Called directly — guarantees index is current for the next query.
-   * @param filePath Absolute path to the file
+   * Re-index a single file: symbols + outgoing references.
+   * Outgoing refs from this file are rebuilt. Refs from other files pointing here
+   * remain valid (IDs are stable after re-index). Rebuilt on next scanProject if stale.
    */
   async reindexFile(filePath: string): Promise<void> {
     const start = Date.now();
-    const content = readFileSync(filePath, 'utf-8');
-    const hash = createHash('sha256').update(content).digest('hex');
-    const stat = statSync(filePath);
-
-    this.db.deleteFileSymbols(filePath);
-    const symbols = this.parser.parseFile(filePath);
-    this.db.insertSymbols(symbols);
-
-    this.db.upsertFile({
-      path: filePath, last_modified: stat.mtimeMs,
-      content_hash: hash, symbol_count: symbols.length,
-      index_time_ms: Date.now() - start
-    });
-
-    this.logInfo(LogEvents.INDEXER_FILE_CHANGED, { filePath, symbols: symbols.length, ms: Date.now() - start });
+    await this.indexSymbols(filePath);
+    const knownNames = this.db.getAllSymbolNames();
+    this.indexRefs(filePath, knownNames);
+    this.logInfo(LogEvents.INDEXER_FILE_CHANGED, { filePath, ms: Date.now() - start });
   }
 
-  /**
-   * Force synchronous re-index, bypassing debounce. Used by flush_file MCP tool.
-   * Cancels any pending debounce for this file first.
-   * @param filePath File to re-index
-   * @returns FlushResult with symbol count and timing
-   */
   async flushFile(filePath: string): Promise<FlushResult> {
     const pending = this.pendingDebounce.get(filePath);
     if (pending) {
@@ -101,12 +77,15 @@ export class IndexerService extends BaseService {
   }
 
   /**
-   * Scan all .ts/.tsx files in projectRoot — skip unchanged files via hash check.
-   * @param projectRoot Absolute project root path
+   * Two-pass full project scan.
+   * Pass 1: index all symbols (skip unchanged files by hash, but still load into ts-morph).
+   * Pass 2: extract and resolve references for ALL files after all symbols are indexed.
    */
   async scanProject(projectRoot: string): Promise<void> {
     this.logInfo(LogEvents.INDEXER_STARTED, { projectRoot });
     const files = this.collectTypeScriptFiles(projectRoot);
+
+    // Pass 1: symbols
     let indexed = 0;
     for (const filePath of files) {
       try {
@@ -115,21 +94,30 @@ export class IndexerService extends BaseService {
         const existing = this.db.getFileRecord(filePath);
         if (existing?.content_hash === hash) {
           this.logDebug(LogEvents.INDEXER_FILE_SKIPPED, { filePath });
+          // Still load into ts-morph so extractReferences can use it in pass 2
+          this.parser.parseFile(filePath);
           continue;
         }
-        await this.reindexFile(filePath);
+        await this.indexSymbols(filePath);
         indexed++;
       } catch (err) {
         this.logError(LogEvents.INDEXER_FILE_CHANGED, err, { filePath });
       }
     }
+
+    // Pass 2: references (all files — cross-file resolution requires all symbols present)
+    const knownNames = this.db.getAllSymbolNames();
+    for (const filePath of files) {
+      try {
+        this.indexRefs(filePath, knownNames);
+      } catch (err) {
+        this.logError(LogEvents.INDEXER_FILE_CHANGED, err, { filePath });
+      }
+    }
+
     this.logInfo(LogEvents.INDEXER_STARTED, { projectRoot, indexed, total: files.length });
   }
 
-  /**
-   * Start chokidar file watcher. Returns watcher for cleanup on shutdown.
-   * @param projectRoot Absolute project root path
-   */
   startWatcher(projectRoot: string): ReturnType<typeof watch> {
     const watcher = watch('**/*.{ts,tsx}', {
       cwd: projectRoot,
@@ -145,6 +133,29 @@ export class IndexerService extends BaseService {
       this.logInfo(LogEvents.INDEXER_FILE_DELETED, { filePath: abs });
     });
     return watcher;
+  }
+
+  /** Index symbols only for a file — used in scanProject pass 1 and reindexFile. */
+  private async indexSymbols(filePath: string): Promise<void> {
+    const start = Date.now();
+    const content = readFileSync(filePath, 'utf-8');
+    const hash = createHash('sha256').update(content).digest('hex');
+    const stat = statSync(filePath);
+    this.db.deleteFileSymbols(filePath);
+    const symbols = this.parser.parseFile(filePath);
+    this.db.insertSymbols(symbols);
+    this.db.upsertFile({
+      path: filePath, last_modified: stat.mtimeMs,
+      content_hash: hash, symbol_count: symbols.length,
+      index_time_ms: Date.now() - start
+    });
+  }
+
+  /** Extract and insert outgoing refs for a file — used in reindexFile and scanProject pass 2. */
+  private indexRefs(filePath: string, knownNames: Set<string>): void {
+    this.db.deleteFileReferences(filePath);
+    const namedRefs = this.parser.extractReferences(filePath, knownNames);
+    this.db.resolveAndInsertNamedRefs(namedRefs);
   }
 
   private collectTypeScriptFiles(projectRoot: string): string[] {
