@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { DatabaseService } from '../../src/services/DatabaseService';
-import type { TsaSymbol } from '../../src/types/common';
+import type { TsaSymbol, NamedRef } from '../../src/types/common';
 
 function makeDb(): DatabaseService {
   const db = new Database(':memory:');
@@ -88,5 +88,83 @@ describe('DatabaseService', () => {
     const callers = svc.getCallers(target.id);
     expect(callers).toHaveLength(1);
     expect(callers[0]!.caller_name).toBe('callerFn');
+  });
+});
+
+describe('DatabaseService — reference methods', () => {
+  let svc: DatabaseService;
+
+  beforeEach(() => {
+    svc = makeDb();
+    svc.insertSymbols([
+      BASE_SYMBOL,
+      { ...BASE_SYMBOL, name: 'callerFn', kind: 'function' as const, file_path: '/proj/src/caller.ts' },
+      { ...BASE_SYMBOL, name: 'Animal', kind: 'interface' as const, file_path: '/proj/src/animal.ts' }
+    ]);
+  });
+
+  it('getAllSymbolNames returns all symbol names as a Set', () => {
+    const names = svc.getAllSymbolNames();
+    expect(names.has('TestClass')).toBe(true);
+    expect(names.has('callerFn')).toBe(true);
+    expect(names instanceof Set).toBe(true);
+  });
+
+  it('resolveAndInsertNamedRefs inserts ref when both symbols resolve', () => {
+    const ref: NamedRef = {
+      sourceName: 'callerFn', sourceFile: '/proj/src/caller.ts',
+      targetName: 'TestClass', targetFile: '/proj/src/test.ts',
+      ref_kind: 'calls', source_line: 5, confidence: 'direct'
+    };
+    svc.resolveAndInsertNamedRefs([ref]);
+    const target = svc.querySymbolsByName('TestClass')[0]!;
+    const callers = svc.getCallers(target.id);
+    expect(callers).toHaveLength(1);
+    expect(callers[0]!.caller_name).toBe('callerFn');
+  });
+
+  it('resolveAndInsertNamedRefs skips ref when source not found', () => {
+    const ref: NamedRef = {
+      sourceName: 'ghostFn', sourceFile: '/proj/src/caller.ts',
+      targetName: 'TestClass', targetFile: '/proj/src/test.ts',
+      ref_kind: 'calls', source_line: 1, confidence: 'direct'
+    };
+    svc.resolveAndInsertNamedRefs([ref]);
+    const target = svc.querySymbolsByName('TestClass')[0]!;
+    expect(svc.getCallers(target.id)).toHaveLength(0);
+  });
+
+  it('resolveAndInsertNamedRefs resolves by name-only when targetFile is null', () => {
+    const ref: NamedRef = {
+      sourceName: 'callerFn', sourceFile: '/proj/src/caller.ts',
+      targetName: 'TestClass', targetFile: null,
+      ref_kind: 'calls', source_line: 5, confidence: 'direct'
+    };
+    svc.resolveAndInsertNamedRefs([ref]);
+    const target = svc.querySymbolsByName('TestClass')[0]!;
+    expect(svc.getCallers(target.id)).toHaveLength(1);
+  });
+
+  it('resolveAndInsertNamedRefs resolves source by file-only when sourceName is <file>', () => {
+    const ref: NamedRef = {
+      sourceName: '<file>', sourceFile: '/proj/src/caller.ts',
+      targetName: 'TestClass', targetFile: '/proj/src/test.ts',
+      ref_kind: 'imports', source_line: 1, confidence: 'direct'
+    };
+    svc.resolveAndInsertNamedRefs([ref]);
+    const related = svc.getRelatedFiles('/proj/src/caller.ts');
+    expect(related.imports_from).toContain('/proj/src/test.ts');
+  });
+
+  it('deleteFileReferences removes only refs whose source symbols are in the file', () => {
+    const ref: NamedRef = {
+      sourceName: 'callerFn', sourceFile: '/proj/src/caller.ts',
+      targetName: 'TestClass', targetFile: '/proj/src/test.ts',
+      ref_kind: 'calls', source_line: 5, confidence: 'direct'
+    };
+    svc.resolveAndInsertNamedRefs([ref]);
+    svc.deleteFileReferences('/proj/src/caller.ts');
+    const target = svc.querySymbolsByName('TestClass')[0]!;
+    expect(svc.getCallers(target.id)).toHaveLength(0);
   });
 });

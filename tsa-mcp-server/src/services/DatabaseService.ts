@@ -2,7 +2,7 @@ import type { Database } from 'bun:sqlite';
 import { BaseService } from './BaseService';
 import { QueryError } from '../errors/QueryError';
 import { LogEvents } from '../logging/logEvents';
-import type { TsaSymbol, TsaReference, FileRecord } from '../types/common';
+import type { TsaSymbol, TsaReference, FileRecord, NamedRef } from '../types/common';
 import type { SymbolRow, ReferenceRow, FileRow } from '../database/types';
 import { SCHEMA_DDL } from '../database/schema';
 
@@ -292,6 +292,70 @@ export class DatabaseService extends BaseService {
       return (this.db.query('SELECT path FROM files').all() as { path: string }[]).map(r => r.path);
     } catch (err) {
       throw new QueryError('Failed to get all file paths', { cause: String(err) });
+    }
+  }
+
+  /**
+   * Get all distinct symbol names in the index. Used to filter call graph extraction
+   * to project-defined symbols only.
+   */
+  getAllSymbolNames(): Set<string> {
+    try {
+      const rows = this.db.query('SELECT DISTINCT name FROM symbols').all() as { name: string }[];
+      return new Set(rows.map(r => r.name));
+    } catch (err) {
+      throw new QueryError('Failed to get all symbol names', { cause: String(err) });
+    }
+  }
+
+  /**
+   * Delete all references whose source symbol belongs to the given file.
+   * Called when refreshing refs for a file without re-indexing its symbols.
+   */
+  deleteFileReferences(filePath: string): void {
+    try {
+      this.db.run(`
+        DELETE FROM "references" WHERE source_symbol_id IN (
+          SELECT id FROM symbols WHERE file_path = ?
+        )
+      `, [filePath]);
+    } catch (err) {
+      throw new QueryError('Failed to delete file references', { cause: String(err), filePath });
+    }
+  }
+
+  /**
+   * Resolve NamedRef[] to symbol IDs and insert into the references table.
+   * sourceName='<file>' resolves to any symbol in sourceFile (for import edges).
+   * targetFile present → resolve by (name + file_path); absent → resolve by name only.
+   * Skips any ref where source or target cannot be resolved.
+   */
+  resolveAndInsertNamedRefs(refs: NamedRef[]): void {
+    if (refs.length === 0) return;
+    const stmt = this.db.prepare(`
+      INSERT OR IGNORE INTO "references" (source_symbol_id, target_symbol_id, ref_kind, source_line, confidence)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    const tx = this.db.transaction((namedRefs: NamedRef[]) => {
+      for (const ref of namedRefs) {
+        const source = ref.sourceName === '<file>'
+          ? this.db.query('SELECT id FROM symbols WHERE file_path = ? LIMIT 1').get(ref.sourceFile) as { id: number } | null
+          : this.db.query('SELECT id FROM symbols WHERE name = ? AND file_path = ?').get(ref.sourceName, ref.sourceFile) as { id: number } | null;
+        if (!source) continue;
+
+        const target = ref.targetFile
+          ? this.db.query('SELECT id FROM symbols WHERE name = ? AND file_path = ?').get(ref.targetName, ref.targetFile) as { id: number } | null
+          : this.db.query('SELECT id FROM symbols WHERE name = ? LIMIT 1').get(ref.targetName) as { id: number } | null;
+        if (!target) continue;
+
+        stmt.run(source.id, target.id, ref.ref_kind, ref.source_line, ref.confidence);
+      }
+    });
+    try {
+      tx(refs);
+      this.logDebug(LogEvents.REFS_INSERTED, { count: refs.length });
+    } catch (err) {
+      throw new QueryError('Failed to resolve and insert named refs', { cause: String(err) });
     }
   }
 }

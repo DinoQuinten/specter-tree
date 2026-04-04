@@ -98,3 +98,17 @@ export interface ToolError {
   };
   _meta: { query_ms: number };
 }
+
+/**
+ * A named reference before DB ID resolution.
+ * sourceName='<file>' means: use any symbol from sourceFile as the source anchor.
+ */
+export interface NamedRef {
+  sourceName: string;
+  sourceFile: string;
+  targetName: string;
+  targetFile: string | null;
+  ref_kind: 'calls' | 'imports' | 'extends' | 'implements';
+  source_line: number | null;
+  confidence: 'direct' | 'inferred' | 'weak';
+}
