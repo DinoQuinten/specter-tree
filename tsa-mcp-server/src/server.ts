@@ -2,7 +2,10 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
-  ListToolsRequestSchema
+  ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  ReadResourceRequestSchema
 } from '@modelcontextprotocol/sdk/types.js';
 import { ZodError } from 'zod';
 import { logger } from './logging/logger';
@@ -68,12 +71,76 @@ export function createTsaServer(services: ServiceContainer): TsaServer {
 
   const server = new Server(
     { name: 'tsa-mcp-server', version: '1.0.0' },
-    { capabilities: { tools: {} } }
+    { capabilities: { tools: {}, resources: {} } }
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: ALL_TOOLS
   }));
+
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: [
+      {
+        uri: 'tsa://files',
+        name: 'Indexed files',
+        description: 'All TypeScript files currently in the index',
+        mimeType: 'application/json'
+      },
+      {
+        uri: 'tsa://symbols',
+        name: 'Indexed symbol names',
+        description: 'All distinct symbol names in the index',
+        mimeType: 'application/json'
+      }
+    ]
+  }));
+
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+    resourceTemplates: [
+      {
+        uriTemplate: 'tsa://file/{path}',
+        name: 'Symbols in file',
+        description: 'All symbols declared in a specific indexed file',
+        mimeType: 'application/json'
+      },
+      {
+        uriTemplate: 'tsa://symbol/{name}',
+        name: 'Symbol record',
+        description: 'Full record for a named symbol',
+        mimeType: 'application/json'
+      }
+    ]
+  }));
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const uri = request.params.uri;
+
+    if (uri === 'tsa://files') {
+      const files = services.db.getAllFilePaths();
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(files) }] };
+    }
+
+    if (uri === 'tsa://symbols') {
+      const names = Array.from(services.db.getAllSymbolNames()).sort();
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(names) }] };
+    }
+
+    const fileMatch = uri.match(/^tsa:\/\/file\/(.+)$/);
+    if (fileMatch) {
+      const filePath = decodeURIComponent(fileMatch[1]!);
+      const symbols = services.db.getSymbolsByFile(filePath);
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(symbols) }] };
+    }
+
+    const symbolMatch = uri.match(/^tsa:\/\/symbol\/(.+)$/);
+    if (symbolMatch) {
+      const name = decodeURIComponent(symbolMatch[1]!);
+      const symbols = services.db.querySymbolsByName(name);
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(symbols) }] };
+    }
+
+    throw new Error(`Unknown resource: ${uri}`);
+  });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name: toolName, arguments: rawInput } = request.params;
