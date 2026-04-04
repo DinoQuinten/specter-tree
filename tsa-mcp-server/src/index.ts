@@ -42,6 +42,16 @@ async function main(): Promise<void> {
   await startServer({ db: dbService, indexer, symbols, references, framework, config });
 }
 
+process.on('uncaughtException', (err) => {
+  logger.error({ event: LogEvents.SERVER_SHUTDOWN, error: String(err), reason: 'uncaughtException' });
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  logger.error({ event: LogEvents.SERVER_SHUTDOWN, error: String(reason), reason: 'unhandledRejection' });
+  process.exit(1);
+});
+
 main().catch(err => {
   logger.error({ event: LogEvents.SERVER_SHUTDOWN, error: String(err) });
   process.exit(1);
