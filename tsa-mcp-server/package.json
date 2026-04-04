@@ -1,5 +1,5 @@
 {
-  "name": "tsa-mcp-server",
+  "name": "specter-tree",
   "version": "0.1.0",
   "description": "TypeScript AST MCP server — codebase intelligence through structural queries",
   "type": "module",
