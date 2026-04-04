@@ -40,6 +40,7 @@ export const INDEX_TOOL_DEFINITIONS: Tool[] = [
  * @description Dispatch index tool calls to IndexerService after Zod validation.
  */
 export async function handleIndexTool(toolName: string, rawInput: unknown, service: IndexerService): Promise<unknown> {
+  if (!service) throw new Error('IndexerService is not available');
   switch (toolName) {
     case 'flush_file':
       return service.flushFile(FlushFileSchema.parse(rawInput).file_path);

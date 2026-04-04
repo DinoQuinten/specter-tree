@@ -81,6 +81,7 @@ export const SYMBOL_TOOL_DEFINITIONS: Tool[] = [
  * @description Dispatch symbol tool calls to SymbolService after Zod validation.
  */
 export function handleSymbolTool(toolName: string, rawInput: unknown, service: SymbolService): unknown {
+  if (!service) throw new Error('SymbolService is not available');
   switch (toolName) {
     case 'find_symbol':
       return service.findSymbol(FindSymbolSchema.parse(rawInput));

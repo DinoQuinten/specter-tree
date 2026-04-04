@@ -63,6 +63,8 @@ export function handleRuntimeTool(
   frameworkService: FrameworkService,
   configService: ConfigService
 ): unknown {
+  if (!frameworkService) throw new Error('FrameworkService is not available');
+  if (!configService) throw new Error('ConfigService is not available');
   switch (toolName) {
     case 'trace_middleware': {
       const { route_path, method } = TraceMiddlewareSchema.parse(rawInput);

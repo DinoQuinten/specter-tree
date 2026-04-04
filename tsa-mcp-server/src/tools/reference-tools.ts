@@ -72,6 +72,7 @@ export const REFERENCE_TOOL_DEFINITIONS: Tool[] = [
  * @description Dispatch reference tool calls to ReferenceService after Zod validation.
  */
 export function handleReferenceTool(toolName: string, rawInput: unknown, service: ReferenceService): unknown {
+  if (!service) throw new Error('ReferenceService is not available');
   switch (toolName) {
     case 'get_callers':
       return service.getCallers(GetCallersSchema.parse(rawInput));
