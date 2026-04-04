@@ -8,6 +8,7 @@ import { ReferenceService } from './services/ReferenceService';
 import { FrameworkService } from './services/FrameworkService';
 import { ConfigService } from './services/ConfigService';
 import { startServer } from './server';
+import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { logger } from './logging/logger';
 import { logQueue } from './logging/logQueue';
 import { LogEvents } from './logging/logEvents';
@@ -20,6 +21,7 @@ async function main(): Promise<void> {
   dbService.initialize();
 
   let watcher: ReturnType<typeof import('chokidar').watch> | undefined;
+  let mcpServer: Server | undefined;
 
   // Shutdown gate: signal resolves this, main() awaits it, finally cleans up.
   let resolveShutdown!: () => void;
@@ -43,10 +45,11 @@ async function main(): Promise<void> {
     await indexer.scanProject(env.TSA_PROJECT_ROOT);
 
     watcher = indexer.startWatcher(env.TSA_PROJECT_ROOT);
+    mcpServer = await startServer({ db: dbService, indexer, symbols, references, framework, config });
 
-    await startServer({ db: dbService, indexer, symbols, references, framework, config });
     await shutdownSignal;
   } finally {
+    await mcpServer?.close();
     await watcher?.close();
     await logQueue.destroy();
     db.close();
@@ -64,7 +67,9 @@ process.on('unhandledRejection', (reason) => {
   process.exit(1);
 });
 
-main().catch(err => {
-  logger.error({ event: LogEvents.SERVER_SHUTDOWN, error: String(err) });
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch(err => {
+    logger.error({ event: LogEvents.SERVER_SHUTDOWN, error: String(err) });
+    process.exit(1);
+  });

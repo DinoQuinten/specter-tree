@@ -107,9 +107,10 @@ export function createTsaServer(services: ServiceContainer): Server {
  * @function startServer
  * @description Connect server to StdioServerTransport and begin serving.
  */
-export async function startServer(services: ServiceContainer): Promise<void> {
+export async function startServer(services: ServiceContainer): Promise<Server> {
   const server = createTsaServer(services);
   const transport = new StdioServerTransport();
   await server.connect(transport);
   logger.info({ event: LogEvents.SERVER_STARTED, tools: ALL_TOOLS.length });
+  return server;
 }
