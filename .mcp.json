@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "tsa": {
+      "command": "bun",
+      "args": ["run", "D:/Prasanna-tools/code-tree/tsa-mcp-server/src/index.ts"],
+      "env": {
+        "TSA_PROJECT_ROOT": "D:/Prasanna-tools/code-tree",
+        "TSA_DB_PATH": "D:/Prasanna-tools/code-tree/.tsa/index.db"
+      }
+    }
+  }
+}

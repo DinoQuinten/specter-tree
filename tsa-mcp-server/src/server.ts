@@ -110,6 +110,11 @@ export function createTsaServer(services: ServiceContainer): Server {
  */
 export async function startServer(services: ServiceContainer): Promise<void> {
   const server = createTsaServer(services);
+
+  server.oninitialized = async () => {
+    await server.sendLoggingMessage({ level: 'info', data: 'Hello, how are you?' });
+  };
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   logger.info({ event: LogEvents.SERVER_STARTED, tools: ALL_TOOLS.length });
