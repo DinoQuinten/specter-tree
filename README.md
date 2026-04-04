@@ -1,23 +1,37 @@
+<div align="center">
+
 # specter-tree
 
-> TypeScript codebase intelligence for AI coding assistants — via the Model Context Protocol.
+**TypeScript codebase intelligence for AI coding assistants**
 
-**specter-tree** gives your AI a structural index of your TypeScript project. Instead of burning tokens reading files to find symbols, it queries a live SQLite index built from the actual AST. One query. Exact file, exact line.
+*One query. Exact file. Exact line.*
 
-And unlike grep, it walks through `.gitignore` walls — worktrees, ignored directories, diverged branches. Everything indexed. Nothing hidden.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Runtime: Bun](https://img.shields.io/badge/Runtime-Bun-f472b6.svg)](https://bun.sh)
+[![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP-8b5cf6.svg)](https://modelcontextprotocol.io)
+[![TypeScript](https://img.shields.io/badge/TypeScript-100%25-3178c6.svg)]()
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
+</div>
+
+---
+
+specter-tree gives your AI a structural index of your TypeScript project. Instead of burning tokens reading files to find symbols, it queries a live SQLite index built from the actual AST.
+
+Unlike grep, it walks through `.gitignore` walls -- worktrees, ignored directories, diverged branches. Everything indexed. Nothing hidden.
 
 ---
 
 ## The problem
 
-Every time an AI navigates your codebase without specter-tree, it does this:
+Every time an AI navigates your codebase without specter-tree:
 
 ```
 Task: find startServer and add a startup greeting
 
-  Step 1  Glob all .ts files              →  31 paths listed
-  Step 2  Grep for "startServer"          →  6 matching lines, scan output
-  Step 3  Read server.ts (full file)      →  126 lines — needed 20
+  Step 1  Glob all .ts files              ->  31 paths listed
+  Step 2  Grep for "startServer"          ->  6 matching lines, scan output
+  Step 3  Read server.ts (full file)      ->  126 lines -- needed 20
   ──────────────────────────────────────────────────────────────
   Total:  ~1350 tokens
   Lines actually needed: 20 of 126
@@ -28,8 +42,8 @@ With specter-tree:
 ```
 Task: find startServer and add a startup greeting
 
-  Step 1  find_symbol("startServer")      →  file + line 111, exact
-  Step 2  Read server.ts lines 111–130    →  20 lines, nothing else
+  Step 1  find_symbol("startServer")      ->  file + line 111, exact
+  Step 2  Read server.ts lines 111-130    ->  20 lines, nothing else
   ──────────────────────────────────────────────────────────────
   Total:  ~500 tokens
   Lines actually needed: 20 of 20
@@ -39,266 +53,221 @@ Same task. Same edit. **63% fewer tokens.**
 
 ---
 
-## Why it's cheaper — three mechanisms
+## How savings scale with task depth
+
+```
+SIMPLE  find one function, edit it
+██████████████████████████████████████████████████  1350 tok  Grep
+██████████████████                                   500 tok  specter-tree    63% saved
+
+MEDIUM  trace callers across 3 files
+█████████████████████████████████████████████████████████████████████  2850 tok  Grep
+████████████████████                                                   900 tok  specter-tree    68% saved
+
+LARGE   map full inheritance, 15+ files
+████████████████████████████████████████████████████████████████████████████████  4800 tok  Grep
+████████████████                                                                 1000 tok  specter-tree    79% saved
+```
+
+> Savings compound with depth. The larger the navigation, the bigger the gap.
+
+---
+
+## Three mechanisms
 
 ### 1. Partial file reads (biggest saving)
 
-specter-tree returns exact line numbers. Claude Code reads 20 lines. Without specter-tree, Claude reads the whole file — hoping the target is in there.
+specter-tree returns exact line numbers. The AI reads 20 lines instead of the full file.
 
 ```
-Without specter-tree:   Read server.ts          126 lines   ~850 tokens
-With specter-tree:      Read server.ts L111–130  20 lines   ~150 tokens
-                                                        ─────────────────
-                                                        Saved: ~700 tokens
+Without:   Read server.ts          126 lines   ~850 tokens
+With:      Read server.ts L111-130  20 lines   ~150 tokens
+                                            ──────────────
+                                            Saved: ~700 tok
 ```
 
-This is the dominant savings category. Not discovered until measured on real code.
+This is the dominant savings category. Not predicted during design -- discovered from benchmark data.
 
-### 2. Navigation is cheaper, not equal
+### 2. Cheaper navigation
 
-Conventional wisdom says structured queries cost more than grep. The opposite is true in practice.
-
-`find_symbol` returns one precise result. Grep returns a list of noisy matches — file names, line numbers, matched text — that the agent has to read and sift through. More output tokens, more context consumed.
+`find_symbol` returns one precise result. Grep returns a noisy list of matches the agent must parse.
 
 ```
-Grep navigation (Glob + Grep):    ~400 tokens
-specter-tree navigation:          ~350 tokens
+Grep navigation (Glob + Grep):       ~400-450 tokens
+specter-tree navigation:             ~350 tokens
 ```
-
-Small on one query. Compounds across a multi-hop task.
 
 ### 3. Zero wrong reads
 
-When navigating blind, an AI opens files that look relevant but aren't. Each wrong read costs 300–3000 tokens depending on file size. specter-tree returns verified symbol locations. No guessing, no wrong opens.
+When navigating blind, an AI opens files that look relevant but aren't. Each wrong read costs 300-3000 tokens. specter-tree returns verified symbol locations. No guessing.
 
 ---
 
-## Token impact — by task depth
+## Architecture
 
-```
-SIMPLE TASK  (find one function, make one edit)
-──────────────────────────────────────────────────────────────── 1350 tok  Without
-──────────────────────────── 500 tok  With specter-tree
-Reduction: ~63%
+```mermaid
+flowchart TB
+    subgraph Project["Your TypeScript Project"]
+        FS["*.ts / *.tsx files"]
+    end
 
+    subgraph Indexer["Layer 1: Offline Indexer (0 tokens)"]
+        CK["chokidar watcher\n300ms debounce"]
+        PM["ts-morph parser\ntwo-pass extraction"]
+        DB[("SQLite B+tree index\n.tsa/index.db")]
+    end
 
-MEDIUM TASK  (trace all callers, 3 hops)
-────────────────────────────────────────────────────────────────────────── 2850 tok  Without
-──────────────────── 900 tok  With specter-tree
-Reduction: ~68%
+    subgraph Tools["Layer 2: Structure Queries (~80-200 tok/call)"]
+        T1["find_symbol"]
+        T2["get_callers"]
+        T3["get_methods"]
+        T4["search_symbols"]
+        T5["get_hierarchy"]
+        T6["get_implementations"]
+    end
 
+    subgraph Runtime["Layer 3: Runtime Context (~200-400 tok/call)"]
+        R1["resolve_config"]
+        R2["get_route_config"]
+        R3["trace_middleware"]
+    end
 
-LARGE TASK  (map full inheritance hierarchy, 15+ files)
-──────────────────────────────────────────────────────────────────────────────────── 4800 tok  Without
-──────────────── 1000 tok  With specter-tree
-Reduction: ~79%
-```
+    subgraph Agent["AI Coding Agent"]
+        CC["Claude Code / Cursor / Codex"]
+    end
 
-> Savings compound with task depth. The larger and deeper the navigation, the bigger the gap.
+    FS -->|file change| CK
+    CK --> PM
+    PM -->|symbols + refs| DB
+    DB --> Tools
+    DB --> Runtime
+    Tools <-->|MCP stdio| Agent
+    Runtime <-->|MCP stdio| Agent
 
----
-
-## Real-life scenarios
-
-### "Add logging to every function that calls DatabaseService"
-
-**Without specter-tree:**
-Grep for `DatabaseService`, read every matching file, trace callers manually, open those files too. 12–20 file reads on a medium project.
-
-**With specter-tree:**
-```
-get_callers("DatabaseService")         → all callers listed
-get_file_symbols(each caller file)     → confirm which functions wrap it
-Edit only those functions
-```
-3 tool calls. No wasted reads.
-
----
-
-### "Find every class that implements IResolver"
-
-**Without specter-tree:**
-Grep for `implements IResolver`. Misses indirect implementations through parent classes. Every match requires opening the file to confirm.
-
-**With specter-tree:**
-```
-get_implementations("IResolver")       → all direct implementors
-get_hierarchy for ambiguous cases      → catches indirect implementations
-```
-Structural query. Cannot be fooled by comments, string literals, or renamed imports.
-
----
-
-### Active worktree development
-
-You're on `feat/new-auth` with a worktree at `.worktrees/feat/new-auth`. Your AI is editing `AuthService`. The worktree is gitignored.
-
-**Grep:** sees only the main branch copy. One version of the function.
-
-**specter-tree:** sees both — and surfaces that they have different signatures. You're warned before you edit the wrong copy.
-
----
-
-### "What files break if I rename this function?"
-
-**Without specter-tree:**
-Grep for the function name. Misses aliased imports, re-exports, indirect calls. Must read every match to verify.
-
-**With specter-tree:**
-```
-get_callers("functionName")            → verified call sites only
-get_related_files(its file)            → all files that import it
-```
-Exact blast radius. Rename with confidence.
-
----
-
-## Benchmark — real data, this codebase
-
-Run live against this repository (31 TypeScript source files). Task identical in both rounds: *add a startup greeting to the MCP server.*
-
-The benchmark was run **twice**, in opposite orders, to eliminate ordering effects.
-
-### Results
-
-```
-         Test 1              Test 2
-         (specter first)     (grep first)
-
-TSA      ~500 tok            ~800 tok  *
-Grep     ~1350 tok           ~1750 tok
-
-Reduction  63%                 54%
-```
-
-*Test 1 used more precise partial reads. Test 2 included one SDK exploration pass that was later ruled unnecessary (see notes).
-
-### Consistent findings across both runs
-
-| Metric | Test 1 | Test 2 | Pattern |
-|---|---|---|---|
-| TSA total tokens | ~500 | ~800 | Always lower |
-| Grep total tokens | ~1350 | ~1750 | Always higher |
-| Reduction | 63% | 54% | 54–67% range |
-| Wrong reads (TSA) | 0 | 0 | Consistent |
-| Wrong reads (Grep) | 0 | 1 | Grep opens SDK |
-| Steps to find target | 1 | 1 | One `find_symbol` call |
-| Lines read | 20 of 126 | 20 of 126 | Targeted every time |
-
-### Stage-by-stage breakdown (updated cost model)
-
-```
-Stage                  Without TSA          With specter-tree
-─────────────────────────────────────────────────────────────
-Navigation             400–450 tokens       350 tokens
-Wrong file reads       0–300 tokens         0 tokens
-Correct file reads     ~850 (full file)     ~150 (20 lines)
-─────────────────────────────────────────────────────────────
-Total (observed)       1350–1750 tokens     500–800 tokens
-Reduction              —                    54–67%
-```
-
-### What the data corrected
-
-**We initially predicted wrong reads would be the primary saving.** Actual data showed partial reads saved 2× more than wrong read elimination. The line number returned by `find_symbol` means Claude reads 20 lines instead of 126 — that's 700 tokens saved on a single file read. This was an unpredicted category.
-
-**We predicted TSA navigation would cost more than Grep.** It costs less. `find_symbol` returns one clean result. Grep returns a list of matches the agent has to parse. More output tokens.
-
-### What specter-tree cannot do
-
-specter-tree indexes project symbols only. External SDK methods — `sendLoggingMessage`, `oninitialized`, anything in `node_modules` — return 0 results. Both test runs hit this wall when needing to verify the MCP SDK's notification API.
-
-**specter-tree and Grep are complements.** Use specter-tree for all project navigation. Fall back to Grep when you need to explore an unfamiliar external API.
-
-### The worktree finding
-
-`find_symbol("startServer")` returned 3 results across main branch and 2 gitignored worktrees. One worktree copy had a different return type (`Promise<TsaServer>` vs `Promise<void>`) — a diverged branch invisible to Grep. The AI correctly filtered to the main project path in one pass. No human disambiguation needed.
-
----
-
-## How it works
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Your TypeScript project               │
-└───────────────────────┬─────────────────────────────────┘
-                        │  file saved / added / deleted
-                        ▼
-              ┌─────────────────────┐
-              │  chokidar watcher   │
-              │  300ms debounce     │
-              └──────────┬──────────┘
-                         │
-                         ▼
-              ┌─────────────────────────────────────────┐
-              │  ts-morph AST parser (two-pass)         │
-              │  Pass 1: symbols — name, kind, line,    │
-              │           signature, modifiers          │
-              │  Pass 2: references — cross-file call   │
-              │           graph edges                   │
-              └──────────┬──────────────────────────────┘
-                         │
-                         ▼
-              ┌──────────────────────────────────────┐
-              │  SQLite index  (.tsa/index.db)        │
-              │                                       │
-              │  symbols      name, kind, file, line  │
-              │  references   caller → callee edges   │
-              │  files        path, hash, modified    │
-              └──────────┬───────────────────────────┘
-                         │
-                         ▼
-              ┌──────────────────────────────────────┐
-              │  MCP server (specter-tree)            │
-              │  Claude / any MCP client queries here │
-              └──────────────────────────────────────┘
+    style Project fill:#1a1a2e,stroke:#534AB7,color:#fff
+    style Indexer fill:#0d1117,stroke:#1D9E75,color:#fff
+    style Tools fill:#0d1117,stroke:#378ADD,color:#fff
+    style Runtime fill:#0d1117,stroke:#D85A30,color:#fff
+    style Agent fill:#0d1117,stroke:#534AB7,color:#fff
 ```
 
 ### Index freshness
 
 | Event | Latency | Mechanism |
 |---|---|---|
-| File saved | 300ms | chokidar debounce → `reindexFile` |
-| File deleted | Immediate | DB entry removed instantly |
+| File saved | ~300ms | chokidar debounce then `reindexFile` |
+| File deleted | Immediate | DB entry removed |
 | AI edits a file | Instant | `flush_file` bypasses debounce |
 | Cold start | One-time scan | Two-pass, hash-skips unchanged files |
-| Manual re-scan | On demand | `index_project` tool |
+
+---
+
+## Data flow
+
+```mermaid
+sequenceDiagram
+    participant Agent as Claude Code
+    participant MCP as specter-tree MCP
+    participant DB as SQLite Index
+    participant FS as Filesystem
+
+    Note over FS,DB: Startup: index all .ts files (one-time)
+
+    Agent->>MCP: find_symbol({ name: "handleLogin" })
+    MCP->>DB: SELECT * FROM symbols WHERE name = 'handleLogin'
+    DB-->>MCP: { file: "auth.ts", line: 42, signature: "..." }
+    MCP-->>Agent: ~100 tokens (exact location)
+
+    Agent->>FS: Read auth.ts lines 42-65
+    Note over Agent: 24 lines instead of 300+
+
+    Agent->>MCP: get_callers({ symbol_name: "handleLogin" })
+    MCP->>DB: SELECT ... FROM references JOIN symbols ...
+    DB-->>MCP: [{ caller: "router.post", file: "routes.ts", line: 18 }]
+    MCP-->>Agent: ~120 tokens (call sites)
+
+    Note over Agent: Total: ~220 tokens navigation<br/>Grep would have been: ~650+ tokens
+```
+
+---
+
+## Benchmark -- real data, this codebase
+
+Run live against this repository (31 TypeScript source files). Same task both rounds: *add a startup greeting to the MCP server.* Run twice in opposite orders to eliminate bias.
+
+### Results
+
+```
+                    Test 1              Test 2
+                    (specter first)     (grep first)
+
+specter-tree        ~500 tok            ~800 tok
+Grep + Read         ~1350 tok           ~1750 tok
+
+Reduction           63%                 54%
+```
+
+### Stage-by-stage breakdown
+
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+xychart-beta
+    title "Token consumption by stage"
+    x-axis ["Navigation", "Wrong reads", "Correct reads", "Total"]
+    y-axis "Tokens" 0 --> 1800
+    bar [425, 150, 850, 1550]
+    bar [350, 0, 150, 500]
+```
+
+| Stage | Without specter-tree | With specter-tree | Saving |
+|---|---|---|---|
+| Navigation | 400-450 tok | ~350 tok | ~15% |
+| Wrong file reads | 0-300 tok | 0 tok | 100% |
+| Correct file reads | ~850 tok (full file) | ~150 tok (20 lines) | ~82% |
+| **Total** | **1350-1750 tok** | **500-800 tok** | **54-67%** |
+
+### What the data corrected
+
+We initially predicted wrong reads would be the primary saving. Actual data showed **partial reads saved 2x more**. The line number from `find_symbol` means the AI reads 20 lines instead of 126 on a single file.
+
+We predicted specter-tree navigation would cost more than Grep. **It costs less.** `find_symbol` returns one clean result. Grep returns a list of matches the agent has to parse.
 
 ---
 
 ## Tools
 
-### Find symbols
+### Symbol queries
 
-| Tool | What it does |
-|---|---|
-| `find_symbol(name, kind?)` | Exact name lookup → file, line, signature |
-| `search_symbols(query, kind?, limit?)` | Partial name search (LIKE matching) |
-| `get_file_symbols(file, kind?)` | All symbols declared in a file |
-| `get_methods(class_name)` | All methods on a class |
+| Tool | Input | Returns |
+|---|---|---|
+| `find_symbol` | `name, kind?` | Exact file, line, signature |
+| `search_symbols` | `query, kind?, limit?` | Partial name matches (LIKE) |
+| `get_file_symbols` | `file_path, kind?` | All symbols declared in a file |
+| `get_methods` | `class_name` | All methods on a class |
 
-### Trace relationships
+### Relationship queries
 
-| Tool | What it does |
-|---|---|
-| `get_callers(symbol, class?)` | All call sites for a function or method |
-| `get_hierarchy(class_name)` | Parent classes + implemented interfaces |
-| `get_implementations(interface)` | All classes that implement an interface |
-| `get_related_files(file)` | What this file imports + what imports it |
+| Tool | Input | Returns |
+|---|---|---|
+| `get_callers` | `symbol_name, class?` | All verified call sites |
+| `get_hierarchy` | `class_name` | Parent classes + implemented interfaces |
+| `get_implementations` | `interface_name` | All classes implementing the interface |
+| `get_related_files` | `file_path` | Import/imported-by relationships |
 
-### Framework detection
+### Framework + config
 
-| Tool | What it does |
-|---|---|
-| `get_route_config()` | Detect routes — Next.js, SvelteKit, Express |
-| `resolve_config()` | Resolved tsconfig + framework config |
+| Tool | Input | Returns |
+|---|---|---|
+| `get_route_config` | `url_path` | Route handler, guards, redirects |
+| `resolve_config` | `config_key` | Resolved value + source chain |
+| `trace_middleware` | `route_path, method?` | Middleware execution order |
 
 ### Index control
 
-| Tool | What it does |
-|---|---|
-| `flush_file(path)` | Force immediate re-index, bypass debounce |
-| `index_project(root)` | Full project re-scan (skips unchanged files) |
+| Tool | Input | Returns |
+|---|---|---|
+| `flush_file` | `file_path` | Force immediate re-index (bypasses debounce) |
+| `index_project` | `root_path` | Full project re-scan |
 
 ---
 
@@ -307,12 +276,14 @@ specter-tree indexes project symbols only. External SDK methods — `sendLogging
 **Prerequisites:** [Bun](https://bun.sh)
 
 ```bash
-git clone https://github.com/your-username/specter-tree
+git clone https://github.com/DinoQuinten/specter-tree.git
 cd specter-tree/tsa-mcp-server
 bun install
 ```
 
-Add to `.mcp.json` (Claude Code) or your MCP client config:
+Add to your MCP client config:
+
+**Claude Code** (`.mcp.json` in project root):
 
 ```json
 {
@@ -328,7 +299,13 @@ Add to `.mcp.json` (Claude Code) or your MCP client config:
 }
 ```
 
-specter-tree scans on first run and stays live. No further setup needed.
+**Claude Code CLI:**
+
+```bash
+claude mcp add --scope project tsa bun run /path/to/specter-tree/tsa-mcp-server/src/index.ts
+```
+
+specter-tree scans on first run and stays live. No further setup.
 
 ---
 
@@ -342,10 +319,141 @@ specter-tree scans on first run and stays live. No further setup needed.
 | `NODE_ENV` | No | `development` | `development` / `production` |
 
 **Auto-detection order for project root:**
+
 1. `--project <path>` CLI flag
 2. `TSA_PROJECT_ROOT` env var
-3. Nearest `tsconfig.json` walking up from `cwd`
-4. `cwd` as fallback
+3. Nearest `tsconfig.json` walking up from CWD
+4. CWD as fallback
+
+---
+
+## Limitations -- be honest
+
+specter-tree indexes **project symbols only**. External SDK methods (anything in `node_modules`) return 0 results. Both benchmark runs hit this when verifying the MCP SDK's notification API.
+
+**specter-tree and Grep are complements.** Use specter-tree for project navigation. Fall back to Grep for unfamiliar external APIs.
+
+The call graph is **best-effort, not complete**. Known gaps:
+
+- Dependency injection (`@Inject` providers)
+- Event emitters (string-based event names)
+- Dynamic dispatch (`obj[methodName]()`)
+- Callbacks and higher-order functions
+- Re-exports and barrel files
+
+All call graph results include a `confidence` field: `direct`, `inferred`, or `weak`.
+
+---
+
+## Under the hood
+
+specter-tree uses SQLite B+trees for all symbol and reference storage.
+
+```mermaid
+erDiagram
+    SYMBOLS {
+        int id PK
+        text name
+        text kind
+        text file_path
+        int line
+        text signature
+        text modifiers
+        int parent_id FK
+    }
+    REFERENCES {
+        int id PK
+        int source_symbol_id FK
+        int target_symbol_id FK
+        text ref_kind
+        text confidence
+    }
+    FILES {
+        text path PK
+        int last_modified
+        text content_hash
+        int symbol_count
+    }
+    SYMBOLS ||--o{ SYMBOLS : "parent_id (class > method)"
+    SYMBOLS ||--o{ REFERENCES : "source (caller)"
+    SYMBOLS ||--o{ REFERENCES : "target (callee)"
+    FILES ||--o{ SYMBOLS : "file_path"
+```
+
+Each `CREATE INDEX` in SQLite builds a separate B+tree on disk. Leaf nodes store sorted (key, rowid) pairs. Interior nodes route searches. Lookups are O(log n), typically 3-4 page reads (~16KB) for 5,000 symbols. Sub-millisecond.
+
+The call graph uses an **adjacency list** strategy (not closure tables). Writes are O(1) per edge. Multi-hop traversals use recursive CTEs for the rare cases that need them.
+
+---
+
+## Contributing
+
+specter-tree is built to be extended. Here's where help is most impactful:
+
+### Language support
+
+The current parser is ts-morph (TypeScript only). The `ParserService` is designed to support additional language parsers. If you want to add Python, Go, Rust, or any other language:
+
+1. Implement the parser interface alongside `src/services/ParserService.ts`
+2. Return the same `Symbol[]` and `Reference[]` structures
+3. Register the parser for file extensions in `IndexerService`
+
+See `src/services/ParserService.ts` for the current TypeScript implementation.
+
+### Framework resolvers
+
+Framework-specific tools (`trace_middleware`, `get_route_config`) use the `IFrameworkResolver` interface. Currently supported: Express, Next.js, SvelteKit.
+
+To add a new framework (Fastify, Hono, Remix, Nuxt, etc.):
+
+1. Create `src/framework/your-framework-resolver.ts`
+2. Implement `IFrameworkResolver`
+3. Add detection logic in `FrameworkService.detectFrameworks()`
+
+### Areas that need work
+
+- **Test coverage**: more edge cases in parser and reference extraction
+- **Performance**: benchmark on 500+ file projects, optimize if needed
+- **Call graph accuracy**: improve reference resolution for barrel files and re-exports
+- **Documentation**: add JSDoc examples to all public methods
+
+### Development setup
+
+```bash
+git clone https://github.com/DinoQuinten/specter-tree.git
+cd specter-tree/tsa-mcp-server
+bun install
+bun test                    # run tests
+bun run src/index.ts        # start the server
+```
+
+### Commit conventions
+
+This project uses conventional commits. Husky hooks enforce:
+
+- **pre-commit**: duplicate symbol/class detection
+- **pre-push**: `bun test` + `bun run lint`
+- **commit-msg**: conventional commit format enforced
+
+```
+feat: add Python parser support
+fix: handle barrel file re-exports in reference extraction
+docs: add contributing guide for framework resolvers
+```
+
+---
+
+## Roadmap
+
+- [x] Layer 1: Offline indexer with incremental updates
+- [x] Layer 2: Symbol and reference query tools
+- [x] Layer 3: Framework detection + config resolution
+- [x] Benchmark against Claude Code native tools
+- [ ] npm package for `npx` installation
+- [ ] Language parser plugin system
+- [ ] Python parser (tree-sitter)
+- [ ] Batch query tool (multiple queries in one MCP call)
+- [ ] Response depth levels (minimal vs full)
 
 ---
 
