@@ -1,8 +1,10 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, beforeAll } from 'bun:test';
 import { join } from 'node:path';
 import { ParserService } from '../../src/services/ParserService';
 
 const FIXTURE = join(import.meta.dir, '../fixtures/simple-ts-project/src/animals.ts');
+const UTILS_FIXTURE = join(import.meta.dir, '../fixtures/simple-ts-project/src/utils.ts');
+const ANIMALS_FIXTURE = join(import.meta.dir, '../fixtures/simple-ts-project/src/animals.ts');
 
 describe('ParserService', () => {
   const parser = new ParserService();
@@ -45,5 +47,56 @@ describe('ParserService', () => {
     const symbols = parser.parseFile(FIXTURE);
     expect(symbols.every(s => s.file_path === FIXTURE)).toBe(true);
     expect(symbols.every(s => s.line > 0)).toBe(true);
+  });
+});
+
+describe('ParserService — extractReferences', () => {
+  const parser = new ParserService();
+
+  beforeAll(() => {
+    parser.parseFile(ANIMALS_FIXTURE);
+    parser.parseFile(UTILS_FIXTURE);
+  });
+
+  it('extracts implements edges from Dog → Animal and Cat → Animal', () => {
+    const allNames = new Set(['Animal', 'Dog', 'Cat', 'greetAnimal', 'makeGreeting', 'PetStatus', 'AnimalKind']);
+    const refs = parser.extractReferences(ANIMALS_FIXTURE, allNames);
+    const implRefs = refs.filter(r => r.ref_kind === 'implements');
+    expect(implRefs.some(r => r.sourceName === 'Dog' && r.targetName === 'Animal')).toBe(true);
+    expect(implRefs.some(r => r.sourceName === 'Cat' && r.targetName === 'Animal')).toBe(true);
+  });
+
+  it('extracts imports edge from utils.ts → animals.ts', () => {
+    const allNames = new Set(['Animal', 'Dog', 'Cat', 'greetAnimal', 'makeGreeting']);
+    const refs = parser.extractReferences(UTILS_FIXTURE, allNames);
+    const importRefs = refs.filter(r => r.ref_kind === 'imports');
+    expect(importRefs.length).toBeGreaterThan(0);
+    expect(importRefs[0]!.targetFile).toContain('animals.ts');
+  });
+
+  it('extracts calls edge from makeGreeting → greetAnimal (cross-file)', () => {
+    const allNames = new Set(['Animal', 'Dog', 'Cat', 'greetAnimal', 'makeGreeting']);
+    const refs = parser.extractReferences(UTILS_FIXTURE, allNames);
+    const callRefs = refs.filter(r => r.ref_kind === 'calls');
+    expect(callRefs.some(r => r.sourceName === 'makeGreeting' && r.targetName === 'greetAnimal')).toBe(true);
+  });
+
+  it('extracts calls edge for Dog constructor call', () => {
+    const allNames = new Set(['Animal', 'Dog', 'Cat', 'greetAnimal', 'makeGreeting']);
+    const refs = parser.extractReferences(UTILS_FIXTURE, allNames);
+    const callRefs = refs.filter(r => r.ref_kind === 'calls');
+    expect(callRefs.some(r => r.targetName === 'Dog')).toBe(true);
+  });
+
+  it('does not extract calls to symbols not in knownSymbolNames', () => {
+    const allNames = new Set(['greetAnimal']);
+    const refs = parser.extractReferences(UTILS_FIXTURE, allNames);
+    const callRefs = refs.filter(r => r.ref_kind === 'calls');
+    expect(callRefs.every(r => allNames.has(r.targetName))).toBe(true);
+  });
+
+  it('returns empty array for file not in project', () => {
+    const refs = parser.extractReferences('/nonexistent/file.ts', new Set());
+    expect(refs).toHaveLength(0);
   });
 });

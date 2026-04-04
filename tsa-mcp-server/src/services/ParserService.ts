@@ -1,21 +1,20 @@
-import { Project, type SourceFile } from 'ts-morph';
+import { Project, SyntaxKind, type SourceFile, type CallExpression, type MethodDeclaration, type FunctionDeclaration, type Node, type NewExpression } from 'ts-morph';
+import { existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { BaseService } from './BaseService';
 import { IndexError } from '../errors/IndexError';
 import { LogEvents } from '../logging/logEvents';
-import type { TsaSymbol } from '../types/common';
+import type { TsaSymbol, NamedRef } from '../types/common';
 
 /**
  * @class ParserService
- * @description Extracts symbols from TypeScript files using ts-morph AST parsing.
+ * @description Extracts symbols and references from TypeScript files using ts-morph AST parsing.
  * Returns flat symbol list with _parentName for two-pass DB insert.
  * Known limitations: cannot resolve DI-injected refs, dynamic dispatch, or string events.
  */
 export class ParserService extends BaseService {
   private readonly project: Project;
 
-  /**
-   * @param tsConfigPath Optional path to tsconfig.json for the project being indexed
-   */
   constructor(tsConfigPath?: string) {
     super('ParserService');
     this.project = new Project({
@@ -56,28 +55,82 @@ export class ParserService extends BaseService {
   }
 
   /**
-   * Extract import/extends/implements references from a file.
-   * Returns partial references — DatabaseService resolves symbol IDs on insert.
-   * @param filePath Absolute file path
-   * @param _symbols Symbols already extracted (reserved for future call graph expansion)
-   * @returns Partial reference data (without source/target IDs)
+   * Extract named references from a file for cross-file resolution.
+   * Returns imports, extends, implements, and calls edges.
+   * The file must have been added to the ts-morph project first (via parseFile or lazy load).
+   * @param filePath Absolute path to the file
+   * @param knownSymbolNames Set of all project symbol names — calls to names outside this set are ignored
    */
-  extractReferences(filePath: string, _symbols: TsaSymbol[]): Array<{ ref_kind: string; source_line: number | null; confidence: string }> {
+  extractReferences(filePath: string, knownSymbolNames: Set<string>): NamedRef[] {
     try {
-      const sourceFile = this.project.getSourceFile(filePath);
-      if (!sourceFile) return [];
-      const refs: Array<{ ref_kind: string; source_line: number | null; confidence: string }> = [];
-
-      for (const imp of sourceFile.getImportDeclarations()) {
-        refs.push({ ref_kind: 'imports', source_line: imp.getStartLineNumber(), confidence: 'direct' });
+      let sourceFile = this.project.getSourceFile(filePath);
+      if (!sourceFile) {
+        if (!existsSync(filePath)) return [];
+        sourceFile = this.project.addSourceFileAtPath(filePath);
       }
+      const refs: NamedRef[] = [];
+      const importMap = this.buildImportMap(sourceFile, filePath);
+
+      // imports edges — one per import declaration (file-level relationship anchor)
+      for (const imp of sourceFile.getImportDeclarations()) {
+        const resolved = this.resolveImportPath(filePath, imp.getModuleSpecifierValue());
+        if (!resolved) continue;
+        const namedImports = imp.getNamedImports();
+        const firstName = namedImports[0]?.getName() ?? imp.getDefaultImport()?.getText();
+        if (!firstName) continue;
+        refs.push({
+          sourceName: '<file>', sourceFile: filePath,
+          targetName: firstName, targetFile: resolved,
+          ref_kind: 'imports', source_line: imp.getStartLineNumber(), confidence: 'direct'
+        });
+      }
+
+      // extends / implements edges from class declarations
       for (const cls of sourceFile.getClasses()) {
-        if (cls.getBaseClass()) {
-          refs.push({ ref_kind: 'extends', source_line: cls.getStartLineNumber(), confidence: 'direct' });
+        const className = cls.getName() ?? '<anonymous>';
+        const baseClass = cls.getBaseClass();
+        if (baseClass) {
+          const baseName = baseClass.getName() ?? '';
+          refs.push({
+            sourceName: className, sourceFile: filePath,
+            targetName: baseName, targetFile: importMap.get(baseName) ?? null,
+            ref_kind: 'extends', source_line: cls.getStartLineNumber(), confidence: 'direct'
+          });
         }
-        for (const _impl of cls.getImplements()) {
-          refs.push({ ref_kind: 'implements', source_line: cls.getStartLineNumber(), confidence: 'direct' });
+        for (const impl of cls.getImplements()) {
+          const ifaceName = impl.getExpression().getText();
+          refs.push({
+            sourceName: className, sourceFile: filePath,
+            targetName: ifaceName, targetFile: importMap.get(ifaceName) ?? null,
+            ref_kind: 'implements', source_line: cls.getStartLineNumber(), confidence: 'direct'
+          });
         }
+      }
+
+      // calls edges — traverse all CallExpression nodes
+      for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression) as CallExpression[]) {
+        const calleeName = this.getCalleeName(call);
+        if (!calleeName || !knownSymbolNames.has(calleeName)) continue;
+        const enclosing = this.getEnclosingName(call);
+        if (!enclosing) continue;
+        refs.push({
+          sourceName: enclosing, sourceFile: filePath,
+          targetName: calleeName, targetFile: importMap.get(calleeName) ?? null,
+          ref_kind: 'calls', source_line: call.getStartLineNumber(), confidence: 'direct'
+        });
+      }
+
+      // new expressions — capture constructor calls (NewExpression is distinct from CallExpression)
+      for (const newExpr of sourceFile.getDescendantsOfKind(SyntaxKind.NewExpression) as NewExpression[]) {
+        const calleeName = newExpr.getExpression().getText();
+        if (!knownSymbolNames.has(calleeName)) continue;
+        const enclosing = this.getEnclosingName(newExpr);
+        if (!enclosing) continue;
+        refs.push({
+          sourceName: enclosing, sourceFile: filePath,
+          targetName: calleeName, targetFile: importMap.get(calleeName) ?? null,
+          ref_kind: 'calls', source_line: newExpr.getStartLineNumber(), confidence: 'direct'
+        });
       }
 
       this.logDebug(LogEvents.PARSER_REFS_EXTRACTED, { filePath, count: refs.length });
@@ -85,6 +138,53 @@ export class ParserService extends BaseService {
     } catch (err) {
       throw new IndexError(`Failed to extract references from ${filePath}`, { cause: String(err), filePath });
     }
+  }
+
+  /** Build map of importedName → resolved absolute file path from all import declarations. */
+  private buildImportMap(sourceFile: SourceFile, filePath: string): Map<string, string> {
+    const map = new Map<string, string>();
+    for (const imp of sourceFile.getImportDeclarations()) {
+      const resolved = this.resolveImportPath(filePath, imp.getModuleSpecifierValue());
+      if (!resolved) continue;
+      for (const named of imp.getNamedImports()) map.set(named.getName(), resolved);
+      const def = imp.getDefaultImport();
+      if (def) map.set(def.getText(), resolved);
+    }
+    return map;
+  }
+
+  /** Resolve a relative import specifier to an absolute .ts file path. Returns null for node_modules or unresolvable. */
+  private resolveImportPath(sourceFile: string, specifier: string): string | null {
+    if (!specifier.startsWith('.')) return null;
+    const base = join(dirname(sourceFile), specifier);
+    for (const suffix of ['.ts', '/index.ts', '.tsx', '/index.tsx']) {
+      const full = base + suffix;
+      if (existsSync(full)) return full;
+    }
+    return null;
+  }
+
+  /** Extract callee name from a CallExpression. Returns last segment for obj.method() calls. */
+  private getCalleeName(call: CallExpression): string | null {
+    const expr = call.getExpression();
+    const kind = expr.getKindName();
+    if (kind === 'Identifier') return expr.getText();
+    if (kind === 'PropertyAccessExpression') {
+      const text = expr.getText();
+      return text.split('.').pop() ?? null;
+    }
+    return null;
+  }
+
+  /** Walk ancestors to find the enclosing named function or method. Returns null for module-level code. */
+  private getEnclosingName(node: Node): string | null {
+    for (const ancestor of node.getAncestors()) {
+      const kind = ancestor.getKindName();
+      if (kind === 'MethodDeclaration') return (ancestor as MethodDeclaration).getName();
+      if (kind === 'FunctionDeclaration') return (ancestor as FunctionDeclaration).getName() ?? null;
+      if (kind === 'Constructor') return 'constructor';
+    }
+    return null;
   }
 
   private extractClasses(sourceFile: SourceFile, filePath: string, symbols: TsaSymbol[]): void {
