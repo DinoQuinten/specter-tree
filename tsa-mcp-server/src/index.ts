@@ -8,7 +8,7 @@ import { ReferenceService } from './services/ReferenceService';
 import { FrameworkService } from './services/FrameworkService';
 import { ConfigService } from './services/ConfigService';
 import { startServer } from './server';
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import type { TsaServer } from './server';
 import { logger } from './logging/logger';
 import { logQueue } from './logging/logQueue';
 import { LogEvents } from './logging/logEvents';
@@ -21,7 +21,7 @@ async function main(): Promise<void> {
   dbService.initialize();
 
   let watcher: ReturnType<typeof import('chokidar').watch> | undefined;
-  let mcpServer: Server | undefined;
+  let mcpServer: TsaServer | undefined;
 
   // Shutdown gate: signal resolves this, main() awaits it, finally cleans up.
   let resolveShutdown!: () => void;
@@ -49,7 +49,8 @@ async function main(): Promise<void> {
 
     await shutdownSignal;
   } finally {
-    await mcpServer?.close();
+    await mcpServer?.drain();
+    await mcpServer?.server.close();
     await watcher?.close();
     await logQueue.destroy();
     db.close();
