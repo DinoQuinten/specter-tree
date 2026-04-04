@@ -13,6 +13,7 @@ describe('Integration: full index + query cycle', () => {
   let db: Database;
   let dbService: DatabaseService;
   let symbolService: SymbolService;
+  let referenceService: ReferenceService;
 
   beforeAll(async () => {
     db = new Database(':memory:');
@@ -22,6 +23,7 @@ describe('Integration: full index + query cycle', () => {
     const indexer = new IndexerService(dbService, parser);
     await indexer.scanProject(FIXTURE);
     symbolService = new SymbolService(dbService);
+    referenceService = new ReferenceService(dbService);
   });
 
   afterAll(() => db.close());
@@ -56,41 +58,21 @@ describe('Integration: full index + query cycle', () => {
     expect(result._meta.query_ms).toBeGreaterThanOrEqual(0);
     expect(result._meta.correlationId).toBeDefined();
   });
-});
 
-describe('Integration: reference graph after scanProject', () => {
-  let db: Database;
-  let dbService: DatabaseService;
-  let refService: ReferenceService;
-
-  beforeAll(async () => {
-    db = new Database(':memory:');
-    dbService = new DatabaseService(db);
-    dbService.initialize();
-    const parser = new ParserService();
-    const indexer = new IndexerService(dbService, parser);
-    await indexer.scanProject(join(import.meta.dir, 'fixtures/simple-ts-project'));
-    refService = new ReferenceService(dbService);
+  test('get_callers — makeGreeting calls greetAnimal (cross-file)', () => {
+    const result = referenceService.getCallers({ symbol_name: 'greetAnimal' });
+    expect(result.results.some(r => r.caller_name === 'makeGreeting')).toBe(true);
   });
 
-  afterAll(() => db.close());
-
-  test('get_callers: makeGreeting (utils.ts) calls greetAnimal (animals.ts)', () => {
-    const greetAnimal = dbService.querySymbolsByName('greetAnimal')[0]!;
-    const callers = dbService.getCallers(greetAnimal.id);
-    expect(callers.some(c => c.caller_name === 'makeGreeting')).toBe(true);
-  });
-
-  test('get_implementations: Dog and Cat implement Animal', () => {
-    const result = refService.getImplementations({ interface_name: 'Animal' });
+  test('get_implementations — Dog and Cat implement Animal', () => {
+    const result = referenceService.getImplementations({ interface_name: 'Animal' });
     const names = result.results.map(r => r.class_name);
     expect(names).toContain('Dog');
     expect(names).toContain('Cat');
   });
 
-  test('get_related_files: utils.ts imports from animals.ts', () => {
-    const utilsPath = join(import.meta.dir, 'fixtures/simple-ts-project/src/utils.ts');
-    const related = refService.getRelatedFiles({ file_path: utilsPath });
-    expect(related.imports_from.some((p: string) => p.endsWith('animals.ts'))).toBe(true);
+  test('get_related_files — utils.ts imports from animals.ts', () => {
+    const result = referenceService.getRelatedFiles({ file_path: join(FIXTURE, 'src/utils.ts') });
+    expect(result.imports_from.some((f: string) => f.includes('animals.ts'))).toBe(true);
   });
 });
