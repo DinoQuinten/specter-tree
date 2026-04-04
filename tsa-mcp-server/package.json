@@ -1,0 +1,27 @@
+{
+  "name": "tsa-mcp-server",
+  "version": "0.1.0",
+  "description": "TypeScript AST MCP server — codebase intelligence through structural queries",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "bun src/index.ts",
+    "test": "bun test",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "latest",
+    "@ts-morph/common": "^0.28.1",
+    "chokidar": "latest",
+    "pino": "latest",
+    "pino-pretty": "latest",
+    "ts-morph": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "bun-types": "latest",
+    "husky": "latest",
+    "typescript": "latest"
+  }
+}

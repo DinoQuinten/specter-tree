@@ -1,0 +1,15 @@
+#!/bin/sh
+echo "Running tests..."
+bun test
+if [ $? -ne 0 ]; then
+  echo "Tests failed. Push blocked."
+  exit 1
+fi
+echo "Running type check..."
+bun run lint
+if [ $? -ne 0 ]; then
+  echo "Type errors found. Push blocked."
+  exit 1
+fi
+echo "Pre-push checks passed."
+exit 0

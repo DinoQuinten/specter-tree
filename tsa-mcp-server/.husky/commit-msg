@@ -1,0 +1,9 @@
+#!/bin/sh
+COMMIT_MSG=$(cat "$1")
+VALID_TYPES="feat|fix|docs|style|refactor|test|chore|perf|ci|build"
+PATTERN="^($VALID_TYPES)(\([a-zA-Z0-9_-]+\))?: .{1,}$"
+if ! echo "$COMMIT_MSG" | grep -E "$PATTERN" > /dev/null; then
+  echo "Invalid commit message. Use: type(scope): description"
+  exit 1
+fi
+exit 0
