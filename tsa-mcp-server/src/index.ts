@@ -18,28 +18,35 @@ async function main(): Promise<void> {
   const dbService = new DatabaseService(db);
   dbService.initialize();
 
-  const parser = new ParserService();
-  const indexer = new IndexerService(dbService, parser);
-  const symbols = new SymbolService(dbService);
-  const references = new ReferenceService(dbService);
-  const framework = new FrameworkService(env.TSA_PROJECT_ROOT);
-  const config = new ConfigService(env.TSA_PROJECT_ROOT);
+  let watcher: ReturnType<typeof import('chokidar').watch> | undefined;
 
-  logger.info({ event: LogEvents.INDEXER_STARTED, projectRoot: env.TSA_PROJECT_ROOT });
-  await indexer.scanProject(env.TSA_PROJECT_ROOT);
+  try {
+    const parser = new ParserService();
+    const indexer = new IndexerService(dbService, parser);
+    const symbols = new SymbolService(dbService);
+    const references = new ReferenceService(dbService);
+    const framework = new FrameworkService(env.TSA_PROJECT_ROOT);
+    const config = new ConfigService(env.TSA_PROJECT_ROOT);
 
-  const watcher = indexer.startWatcher(env.TSA_PROJECT_ROOT);
+    logger.info({ event: LogEvents.INDEXER_STARTED, projectRoot: env.TSA_PROJECT_ROOT });
+    await indexer.scanProject(env.TSA_PROJECT_ROOT);
 
-  process.on('SIGINT', async () => {
-    await watcher.close();
-    process.exit(0);
-  });
-  process.on('SIGTERM', async () => {
-    await watcher.close();
-    process.exit(0);
-  });
+    watcher = indexer.startWatcher(env.TSA_PROJECT_ROOT);
 
-  await startServer({ db: dbService, indexer, symbols, references, framework, config });
+    process.on('SIGINT', async () => {
+      await watcher!.close();
+      process.exit(0);
+    });
+    process.on('SIGTERM', async () => {
+      await watcher!.close();
+      process.exit(0);
+    });
+
+    await startServer({ db: dbService, indexer, symbols, references, framework, config });
+  } finally {
+    await watcher?.close();
+    db.close();
+  }
 }
 
 process.on('uncaughtException', (err) => {
