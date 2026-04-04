@@ -9,6 +9,7 @@ import { FrameworkService } from './services/FrameworkService';
 import { ConfigService } from './services/ConfigService';
 import { startServer } from './server';
 import { logger } from './logging/logger';
+import { logQueue } from './logging/logQueue';
 import { LogEvents } from './logging/logEvents';
 
 async function main(): Promise<void> {
@@ -19,6 +20,16 @@ async function main(): Promise<void> {
   dbService.initialize();
 
   let watcher: ReturnType<typeof import('chokidar').watch> | undefined;
+
+  // Shutdown gate: signal resolves this, main() awaits it, finally cleans up.
+  let resolveShutdown!: () => void;
+  const shutdownSignal = new Promise<void>(res => { resolveShutdown = res; });
+  const onSignal = (): void => {
+    logger.info({ event: LogEvents.SERVER_SHUTDOWN, reason: 'signal' });
+    resolveShutdown();
+  };
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
 
   try {
     const parser = new ParserService();
@@ -33,19 +44,13 @@ async function main(): Promise<void> {
 
     watcher = indexer.startWatcher(env.TSA_PROJECT_ROOT);
 
-    process.on('SIGINT', async () => {
-      await watcher!.close();
-      process.exit(0);
-    });
-    process.on('SIGTERM', async () => {
-      await watcher!.close();
-      process.exit(0);
-    });
-
     await startServer({ db: dbService, indexer, symbols, references, framework, config });
+    await shutdownSignal;
   } finally {
     await watcher?.close();
+    await logQueue.destroy();
     db.close();
+    logger.info({ event: LogEvents.SERVER_SHUTDOWN, reason: 'cleanup done' });
   }
 }
 

@@ -6,7 +6,6 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { ZodError } from 'zod';
 import { logger } from './logging/logger';
-import { logQueue } from './logging/logQueue';
 import { LogEvents } from './logging/logEvents';
 import type { DatabaseService } from './services/DatabaseService';
 import type { IndexerService } from './services/IndexerService';
@@ -113,13 +112,4 @@ export async function startServer(services: ServiceContainer): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   logger.info({ event: LogEvents.SERVER_STARTED, tools: ALL_TOOLS.length });
-
-  const shutdown = async (): Promise<void> => {
-    logger.info({ event: LogEvents.SERVER_SHUTDOWN });
-    await logQueue.destroy();
-    process.exit(0);
-  };
-
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
 }
