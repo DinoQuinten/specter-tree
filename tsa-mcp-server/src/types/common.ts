@@ -108,6 +108,7 @@ export interface NamedRef {
   sourceFile: string;
   targetName: string;
   targetFile: string | null;
+  /** Subset of RefKind — type_ref and decorator are not yet extracted by ParserService. */
   ref_kind: 'calls' | 'imports' | 'extends' | 'implements';
   source_line: number | null;
   confidence: 'direct' | 'inferred' | 'weak';

@@ -332,28 +332,30 @@ export class DatabaseService extends BaseService {
    */
   resolveAndInsertNamedRefs(refs: NamedRef[]): void {
     if (refs.length === 0) return;
-    const stmt = this.db.prepare(`
-      INSERT OR IGNORE INTO "references" (source_symbol_id, target_symbol_id, ref_kind, source_line, confidence)
-      VALUES (?, ?, ?, ?, ?)
-    `);
     const tx = this.db.transaction((namedRefs: NamedRef[]) => {
+      const insert          = this.db.prepare(`INSERT OR IGNORE INTO "references" (source_symbol_id, target_symbol_id, ref_kind, source_line, confidence) VALUES (?, ?, ?, ?, ?)`);
+      const srcByFile       = this.db.prepare('SELECT id FROM symbols WHERE file_path = ? LIMIT 1');
+      const srcByName       = this.db.prepare('SELECT id FROM symbols WHERE name = ? AND file_path = ?');
+      const tgtByBoth       = this.db.prepare('SELECT id FROM symbols WHERE name = ? AND file_path = ?');
+      const tgtByName       = this.db.prepare('SELECT id FROM symbols WHERE name = ? LIMIT 1');
+      let inserted = 0;
       for (const ref of namedRefs) {
-        const source = ref.sourceName === '<file>'
-          ? this.db.query('SELECT id FROM symbols WHERE file_path = ? LIMIT 1').get(ref.sourceFile) as { id: number } | null
-          : this.db.query('SELECT id FROM symbols WHERE name = ? AND file_path = ?').get(ref.sourceName, ref.sourceFile) as { id: number } | null;
+        const source = (ref.sourceName === '<file>'
+          ? srcByFile.get(ref.sourceFile)
+          : srcByName.get(ref.sourceName, ref.sourceFile)) as { id: number } | null;
         if (!source) continue;
-
-        const target = ref.targetFile
-          ? this.db.query('SELECT id FROM symbols WHERE name = ? AND file_path = ?').get(ref.targetName, ref.targetFile) as { id: number } | null
-          : this.db.query('SELECT id FROM symbols WHERE name = ? LIMIT 1').get(ref.targetName) as { id: number } | null;
+        const target = (ref.targetFile
+          ? tgtByBoth.get(ref.targetName, ref.targetFile)
+          : tgtByName.get(ref.targetName)) as { id: number } | null;
         if (!target) continue;
-
-        stmt.run(source.id, target.id, ref.ref_kind, ref.source_line, ref.confidence);
+        insert.run(source.id, target.id, ref.ref_kind, ref.source_line, ref.confidence);
+        inserted++;
       }
+      return inserted;
     });
     try {
-      tx(refs);
-      this.logDebug(LogEvents.REFS_INSERTED, { count: refs.length });
+      const inserted = tx(refs) as number;
+      this.logDebug(LogEvents.REFS_INSERTED, { attempted: refs.length, inserted });
     } catch (err) {
       throw new QueryError('Failed to resolve and insert named refs', { cause: String(err) });
     }
