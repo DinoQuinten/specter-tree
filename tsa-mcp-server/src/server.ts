@@ -16,13 +16,7 @@ import {
 import { ZodError } from 'zod';
 import { logger } from './logging/logger';
 import { LogEvents } from './logging/logEvents';
-import type { DatabaseService } from './services/DatabaseService';
-import type { IndexerService } from './services/IndexerService';
-import type { SymbolService } from './services/SymbolService';
-import type { ReferenceService } from './services/ReferenceService';
-import type { FrameworkService } from './services/FrameworkService';
-import type { ConfigService } from './services/ConfigService';
-import type { InsightService } from './services/InsightService';
+import type { ProjectRuntime } from './runtime/ProjectRuntime';
 import pkg from '../package.json' with { type: 'json' };
 import { SYMBOL_TOOL_DEFINITIONS, handleSymbolTool } from './tools/symbol-tools';
 import { REFERENCE_TOOL_DEFINITIONS, handleReferenceTool } from './tools/reference-tools';
@@ -45,26 +39,6 @@ const RUNTIME_TOOL_NAMES = new Set(RUNTIME_TOOL_DEFINITIONS.map(t => t.name));
 const INSIGHT_TOOL_NAMES = new Set(INSIGHT_TOOL_DEFINITIONS.map(t => t.name));
 
 /**
- * @description Fully initialised service instances passed into the server factory.
- */
-interface ServiceContainer {
-  /** Database access layer. */
-  db: DatabaseService;
-  /** File watcher and incremental indexer. */
-  indexer: IndexerService;
-  /** Symbol look-up and search. */
-  symbols: SymbolService;
-  /** Call-graph and reference queries. */
-  references: ReferenceService;
-  /** Framework detection and route/middleware tracing. */
-  framework: FrameworkService;
-  /** Project config key resolution. */
-  config: ConfigService;
-  /** File-summary and edit-target insight tools. */
-  insight: InsightService;
-}
-
-/**
  * @description Wraps an MCP Server with an in-flight request counter for graceful drain
  * on shutdown.
  */
@@ -82,10 +56,10 @@ export interface TsaServer {
 /**
  * @description Builds and wires the MCP Server instance with all tool and resource handlers.
  * Does not connect a transport — call `server.connect(transport)` separately.
- * @param services - Fully initialised service container.
+ * @param runtime - Mutable project runtime for this stdio server session.
  * @returns A TsaServer wrapping the configured MCP Server with a drain helper.
  */
-export function createTsaServer(services: ServiceContainer): TsaServer {
+export function createTsaServer(runtime: ProjectRuntime): TsaServer {
   let inFlight = 0;
   let drainResolve: (() => void) | null = null;
 
@@ -145,6 +119,7 @@ export function createTsaServer(services: ServiceContainer): TsaServer {
 
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const uri = request.params.uri;
+    const services = runtime.getServices();
 
     if (uri === 'tsa://files') {
       const files = services.db.getAllFilePaths();
@@ -182,15 +157,16 @@ export function createTsaServer(services: ServiceContainer): TsaServer {
       let result: unknown;
 
       if (SYMBOL_TOOL_NAMES.has(toolName)) {
-        result = handleSymbolTool(toolName, rawInput, services.symbols);
+        result = handleSymbolTool(toolName, rawInput, runtime.getServices().symbols);
       } else if (REFERENCE_TOOL_NAMES.has(toolName)) {
-        result = handleReferenceTool(toolName, rawInput, services.references);
+        result = handleReferenceTool(toolName, rawInput, runtime.getServices().references);
       } else if (INDEX_TOOL_NAMES.has(toolName)) {
-        result = await handleIndexTool(toolName, rawInput, services.indexer);
+        result = await handleIndexTool(toolName, rawInput, runtime);
       } else if (RUNTIME_TOOL_NAMES.has(toolName)) {
+        const services = runtime.getServices();
         result = handleRuntimeTool(toolName, rawInput, services.framework, services.config);
       } else if (INSIGHT_TOOL_NAMES.has(toolName)) {
-        result = handleInsightTool(toolName, rawInput, services.insight);
+        result = handleInsightTool(toolName, rawInput, runtime.getServices().insight);
       } else {
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ error: `Unknown tool: ${toolName}` }) }],
@@ -230,11 +206,11 @@ export function createTsaServer(services: ServiceContainer): TsaServer {
 
 /**
  * @description Connects the MCP server to a StdioServerTransport and begins serving requests.
- * @param services - Fully initialised service container.
+ * @param runtime - Mutable project runtime for this stdio server session.
  * @returns The running TsaServer instance with an active transport connection.
  */
-export async function startServer(services: ServiceContainer): Promise<TsaServer> {
-  const tsaServer = createTsaServer(services);
+export async function startServer(runtime: ProjectRuntime): Promise<TsaServer> {
+  const tsaServer = createTsaServer(runtime);
   const transport = new StdioServerTransport();
   await tsaServer.server.connect(transport);
   logger.info({ event: LogEvents.SERVER_STARTED, tools: ALL_TOOLS.length });

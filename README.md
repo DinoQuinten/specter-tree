@@ -18,21 +18,120 @@
 
 ## What is this?
 
-specter-tree is a background server that reads your TypeScript project and builds a live index of every function, class, interface, and reference in it. Your AI coding assistant (Claude Code, Cursor, Codex) connects to that index and can answer questions like:
+specter-tree is a TypeScript-aware MCP server. It builds a live structural index of your codebase so coding agents like Claude Code, Codex, and Cursor-compatible clients can ask for exact symbols, call sites, routes, and config values instead of searching blindly through files.
 
 - *Where is `handleLogin` defined?* → exact file + line number, instantly
 - *What calls `validateUser`?* → every call site across your whole project
 - *What does this class extend?* → full inheritance chain
 
-Without specter-tree, your AI reads whole files, scans grep results, and sometimes opens the wrong file entirely. With specter-tree it asks one question and gets one precise answer.
+Without specter-tree, the agent scans grep output, reads whole files, and often opens the wrong place first. With specter-tree, it asks one structural question and gets one precise answer.
+
+---
+
+## The promise
+
+Normal workflow:
+
+1. Clone this repo and run `bun run dev`.
+2. `specter-tree` prints the MCP JSON and the prompt text you need.
+3. Open Codex in the project you actually want to work on.
+4. Paste the printed output into Codex.
+5. Codex configures the MCP connection, binds `tsa` to the current workspace, and starts navigating with `tsa` before grep/glob.
 
 ---
 
 ## What is MCP?
 
-MCP (Model Context Protocol) is a standard way for AI assistants to talk to external tools. Think of it like a plugin system — you run a small server locally, tell your AI where it is, and the AI can call its tools during a conversation.
+MCP (Model Context Protocol) is the standard way coding agents connect to tools. `specter-tree` is one MCP server. Once connected, the agent can call its structural code-navigation tools during the conversation instead of relying on text search.
 
-specter-tree is one such server. Once connected, your AI has 17 tools for navigating your codebase structurally instead of by text search.
+The key model here is simple: your coding agent launches the `specter-tree` stdio server for the session, then `specter-tree` binds itself to the current workspace root from inside that session.
+
+---
+
+## Start in 3 steps
+
+### 1. Install `specter-tree`
+
+Install [Bun](https://bun.sh) if needed, then:
+
+```bash
+git clone https://github.com/DinoQuinten/specter-tree.git
+cd specter-tree/tsa-mcp-server
+bun install
+```
+
+### 2. Run the server once
+
+From `specter-tree/tsa-mcp-server`:
+
+```bash
+bun run dev
+```
+
+The startup output prints:
+
+- the MCP JSON/config Codex needs
+- the prompt text telling Codex how to connect and use `tsa`
+- the currently detected root for visibility/debugging
+
+This is the intended onboarding flow. The user should copy what `bun run dev` prints and paste it into Codex.
+
+### 3. Paste the printed output into Codex
+
+Open Codex in the project you actually want to work on, then paste the printed setup block from `bun run dev`.
+
+Codex should then:
+
+- add or update the MCP configuration for `tsa`
+- confirm the server is available
+- call `set_project_root` with the current workspace root
+- start using `tsa` for navigation immediately
+
+If you want to see the prompt again without starting a full new session, you can also use:
+
+```bash
+bun run dev --prompt
+```
+
+## What Codex will use under the hood
+
+The printed output contains MCP config in this shape:
+
+```json
+{
+  "mcpServers": {
+    "tsa": {
+      "command": "bun",
+      "args": ["run", "/absolute/path/to/specter-tree/tsa-mcp-server/src/index.ts"]
+    }
+  }
+}
+```
+
+Codex is expected to take that config and do the MCP setup work. Manual editing of `.mcp.json` should be treated as a fallback, not the main path.
+
+For advanced/manual debugging, you can still:
+
+```bash
+bun run dev --project /path/to/project
+TSA_PROJECT_ROOT=/path/to/project bun run dev
+```
+
+---
+
+## What happens after you paste the prompt
+
+The agent should:
+
+1. use the printed MCP JSON/config to connect `tsa`
+2. confirm that the `tsa` MCP server is available
+3. inspect the available `tsa` tools/resources
+4. call `set_project_root` with the active workspace root
+5. find the exact symbol/file/route with `tsa`
+6. read only the smallest code region it needs
+7. call `flush_file` after editing so the index stays fresh
+
+That is the entire intended onboarding flow. Users should not need to hardcode `TSA_PROJECT_ROOT` in normal setup.
 
 ---
 
@@ -85,11 +184,11 @@ LARGE   map full inheritance, 15+ files
 
 There are two moving parts:
 
-1. **The specter-tree server** — runs on your machine, watches your TypeScript project, keeps a SQLite index of every symbol and reference. Uses zero tokens. Runs in the background.
+1. **The specter-tree server** — runs on your machine, watches the currently bound TypeScript project, and keeps a SQLite index of every symbol and reference. Uses zero tokens.
 
-2. **Your AI agent** — Claude Code, Cursor, Codex, etc. Once you give it the connection config, it can call specter-tree tools during a conversation instead of reading raw files.
+2. **Your AI agent** — Claude Code, Codex, Cursor, etc. Once connected, it calls specter-tree tools during the conversation instead of reading raw files first.
 
-The key thing to understand: **the server and your AI agent are separate processes.** The server needs to know where your project lives. The agent needs to know where the server is. This README walks you through connecting both ends.
+The key thing to understand: **the server and your AI agent are separate processes.** The client launches the server, and the agent then binds that server to the current workspace root with `set_project_root`.
 
 ```mermaid
 flowchart TB
@@ -119,141 +218,6 @@ flowchart TB
     style Server fill:#1a1a2e,stroke:#1D9E75,color:#fff
     style Agent fill:#1a1a2e,stroke:#a855f7,color:#fff
 ```
-
----
-
-## Setup — 3 steps
-
-### Prerequisites
-
-Install [Bun](https://bun.sh) if you don't have it:
-
-```bash
-curl -fsSL https://bun.sh/install | bash
-```
-
----
-
-### Step 1 — Install specter-tree
-
-```bash
-git clone https://github.com/DinoQuinten/specter-tree.git
-cd specter-tree/tsa-mcp-server
-bun install
-```
-
----
-
-### Step 2 — Start the server pointing at your project
-
-```bash
-cd specter-tree/tsa-mcp-server
-TSA_PROJECT_ROOT=/path/to/your/typescript/project bun run dev
-```
-
-Replace `/path/to/your/typescript/project` with the actual folder containing your `tsconfig.json`.
-
-**Windows example:**
-```bash
-TSA_PROJECT_ROOT="C:\Users\you\projects\my-app" bun run dev
-```
-
-**Don't know the path?** Just `cd` into your project and use `$PWD`:
-```bash
-TSA_PROJECT_ROOT=$PWD bun run dev
-```
-
-When it starts you'll see a banner confirming the project root and database path, followed by a **ready-to-paste connection prompt** for your AI agent:
-
-```
-  ╔═════════════════════════════════════════════════╗
-  ║  specter-tree  v0.1.0                           ║
-  ║  TypeScript AST codebase intelligence           ║
-  ╚═════════════════════════════════════════════════╝
-
-  Project root   /your/project
-  Database       /your/project/.tsa/index.db
-
-  ──────────────────────────────────────────────────────
-  Paste this into Codex, Claude Code, or any MCP-capable agent:
-  ──────────────────────────────────────────────────────
-
-  │ STEP 1 — Connect the MCP server
-  │ Add the following to your .mcp.json:
-  │
-  │ {
-  │   "mcpServers": {
-  │     "tsa": {
-  │       "command": "bun",
-  │       "args": ["run", "/actual/path/to/tsa-mcp-server/src/index.ts"],
-  │       "env": { "TSA_PROJECT_ROOT": "/your/project" }
-  │     }
-  │   }
-  │ }
-  …
-
-  ● Indexing project files…  Ctrl+C to stop
-```
-
-> The JSON config shown **contains your actual paths** — not placeholders. Copy it directly.
-
----
-
-### Step 3 — Connect your AI agent
-
-The banner and `--prompt` flag both print a JSON block with your exact server path and project root. Use it to connect your agent:
-
-#### Get the connection config
-
-```bash
-# Print to terminal
-bun run dev --prompt
-
-# Copy to clipboard — macOS
-bun run dev --prompt | pbcopy
-
-# Copy to clipboard — Windows
-bun run dev --prompt | clip
-
-# Copy to clipboard — Linux
-bun run dev --prompt | xclip -selection clipboard
-```
-
-#### Paste into your agent
-
-**Claude Code** — create `.mcp.json` in your project root:
-
-Paste the JSON block from `--prompt` output. It looks like:
-
-```json
-{
-  "mcpServers": {
-    "tsa": {
-      "command": "bun",
-      "args": ["run", "/your/actual/path/tsa-mcp-server/src/index.ts"],
-      "env": {
-        "TSA_PROJECT_ROOT": "/your/actual/project"
-      }
-    }
-  }
-}
-```
-
-**Claude Code CLI** (one-liner):
-
-```bash
-claude mcp add --scope project tsa -- bun run /your/actual/path/tsa-mcp-server/src/index.ts
-```
-
-**Cursor** — add to `~/.cursor/mcp.json` using the same JSON shape. Use `${workspaceFolder}` for `TSA_PROJECT_ROOT` if you want it to follow whichever project you have open.
-
-After saving, **reload your agent session**. When the session starts, paste the full prompt text from `bun run dev --prompt` into your first message. The agent will confirm the connection and start using specter-tree tools automatically.
-
----
-
-### That's it
-
-specter-tree scans your project on first run (~5-10 seconds for most codebases), then watches for file changes. The index stays live as you edit. No rebuilds. No restarts.
 
 ---
 
@@ -300,8 +264,9 @@ Once connected, your AI has 17 structural tools instead of blind file reading:
 
 | Tool | What it does |
 |---|---|
+| `set_project_root(project_root)` | Bind `tsa` to the current workspace root and index it for this agent session |
 | `flush_file(file_path)` | Force immediate re-index after an edit (bypasses the 300ms debounce) |
-| `index_project(root)` | Full project re-scan |
+| `index_project(root)` | Full re-scan of the active root |
 
 ### Browse without tool calls (MCP Resources)
 
@@ -314,16 +279,18 @@ Once connected, your AI has 17 structural tools instead of blind file reading:
 
 ---
 
-## Environment variables
+## Environment variables and overrides
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `TSA_PROJECT_ROOT` | No | Auto-detected | TypeScript project to index |
+| `TSA_PROJECT_ROOT` | No | Auto-detected | Advanced override for the initial project root before `set_project_root` is called |
 | `TSA_DB_PATH` | No | `{root}/.tsa/index.db` | Where to store the SQLite index |
 | `LOG_LEVEL` | No | `info` | `debug` / `info` / `warn` / `error` |
 | `NODE_ENV` | No | `development` | `development` / `production` |
 
-**How `TSA_PROJECT_ROOT` is found if you don't set it:**
+In normal usage, you should not need to set `TSA_PROJECT_ROOT` manually. The agent should call `set_project_root` for the active workspace after it connects.
+
+**If no override is provided, the initial root is detected in this order:**
 
 1. `--project <path>` CLI flag
 2. `TSA_PROJECT_ROOT` env var

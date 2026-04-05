@@ -52,6 +52,24 @@ export class DatabaseService extends BaseService {
   }
 
   /**
+   * @description Clears all project-scoped index tables while keeping the schema in place.
+   * Used when rebinding a running server to a different project root but reusing the same DB path.
+   * @throws {QueryError} - When the reset transaction fails.
+   */
+  resetProjectData(): void {
+    try {
+      this.db.exec(`
+        DELETE FROM "references";
+        DELETE FROM file_imports;
+        DELETE FROM symbols;
+        DELETE FROM files;
+      `);
+    } catch (err) {
+      throw new QueryError('Failed to reset project data', { cause: String(err) });
+    }
+  }
+
+  /**
    * @description Reads the current schema version from the project_meta table.
    * @returns Schema version number, or 0 when the key has not been set.
    */

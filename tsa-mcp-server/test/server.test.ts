@@ -1,39 +1,23 @@
-import { beforeAll, describe, expect, it } from 'bun:test';
-import { Database } from 'bun:sqlite';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { join } from 'node:path';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createTsaServer } from '../src/server';
-import { DatabaseService } from '../src/services/DatabaseService';
-import { ParserService } from '../src/services/ParserService';
-import { IndexerService } from '../src/services/IndexerService';
-import { SymbolService } from '../src/services/SymbolService';
-import { ReferenceService } from '../src/services/ReferenceService';
-import { FrameworkService } from '../src/services/FrameworkService';
-import { ConfigService } from '../src/services/ConfigService';
-import { InsightService } from '../src/services/InsightService';
+import { ProjectRuntime } from '../src/runtime/ProjectRuntime';
 
 const FIXTURE = join(import.meta.dir, 'fixtures/simple-ts-project');
 
 describe('MCP server contract', () => {
   let server: ReturnType<typeof createTsaServer>['server'];
+  let runtime: ProjectRuntime;
 
   beforeAll(async () => {
-    const raw = new Database(':memory:');
-    const db = new DatabaseService(raw);
-    db.initialize();
-    const parser = new ParserService();
-    const indexer = new IndexerService(db, parser);
-    await indexer.scanProject(FIXTURE);
+    runtime = new ProjectRuntime({ initialProjectRoot: FIXTURE });
+    await runtime.initialize();
+    server = createTsaServer(runtime).server;
+  });
 
-    server = createTsaServer({
-      db,
-      indexer,
-      symbols: new SymbolService(db),
-      references: new ReferenceService(db),
-      framework: new FrameworkService(FIXTURE),
-      config: new ConfigService(FIXTURE),
-      insight: new InsightService(FIXTURE, db, new FrameworkService(FIXTURE))
-    }).server;
+  afterAll(async () => {
+    await runtime.shutdown();
   });
 
   it('lists all registered tools', async () => {
@@ -51,6 +35,7 @@ describe('MCP server contract', () => {
     expect(result.tools.some((tool: { name: string }) => tool.name === 'resolve_exports')).toBe(true);
     expect(result.tools.some((tool: { name: string }) => tool.name === 'find_write_targets')).toBe(true);
     expect(result.tools.some((tool: { name: string }) => tool.name === 'explain_flow')).toBe(true);
+    expect(result.tools.some((tool: { name: string }) => tool.name === 'set_project_root')).toBe(true);
   });
 
   it('returns a structured validation error for invalid tool input', async () => {

@@ -10,21 +10,13 @@
 import pkg from '../package.json' with { type: 'json' };
 import chalk from 'chalk';
 import { validateEnv } from './types/env';
-import { getDatabase } from './database/client';
-import { DatabaseService } from './services/DatabaseService';
-import { ParserService } from './services/ParserService';
-import { IndexerService } from './services/IndexerService';
-import { SymbolService } from './services/SymbolService';
-import { ReferenceService } from './services/ReferenceService';
-import { FrameworkService } from './services/FrameworkService';
-import { ConfigService } from './services/ConfigService';
-import { InsightService } from './services/InsightService';
 import { startServer } from './server';
 import type { TsaServer } from './server';
 import { logger } from './logging/logger';
 import { logQueue } from './logging/logQueue';
 import { LogEvents } from './logging/logEvents';
 import { getQuickStartPrompt } from './prompt';
+import { ProjectRuntime } from './runtime/ProjectRuntime';
 
 const c = {
   brand:   chalk.hex('#a855f7'),   // purple — specter-tree brand
@@ -63,15 +55,14 @@ function printSetupHelp(): void {
     `     ${c.code('cd specter-tree/tsa-mcp-server && bun install')}`,
     '',
     c.step('  2. Test locally'),
-    `     ${c.code('TSA_PROJECT_ROOT=/your/project bun run dev')}`,
-    `     ${c.code('bun run dev --project /your/project')}`,
+    `     ${c.code('bun run dev')}`,
+    `     ${c.code('bun run dev --project /your/project')} ${c.muted('(advanced override)')}`,
     '',
     c.step('  3. Add to Claude Code') + c.muted('  (.mcp.json in project root)'),
     c.dim('     {'),
     c.dim('       "mcpServers": { "tsa": {'),
     `         ${c.dim('"command": "bun",')}`,
-    `         ${c.dim('"args": ["run",')} ${c.code('"/path/to/tsa-mcp-server/src/index.ts"')}${c.dim('],')}`,
-    `         ${c.dim('"env": {')} ${c.key('"TSA_PROJECT_ROOT"')}${c.dim(':')} ${c.value('"/your/project"')} ${c.dim('}')}`,
+    `         ${c.dim('"args": ["run",')} ${c.code('"/path/to/tsa-mcp-server/src/index.ts"')}${c.dim(']')}`,
     c.dim('     }}}'),
     '',
     c.step('  4. Add to Cursor') + c.muted('  (~/.cursor/mcp.json — same shape, use "${workspaceFolder}")'),
@@ -110,6 +101,7 @@ function printStartupBanner(env: { TSA_PROJECT_ROOT: string; TSA_DB_PATH: string
     `  ${c.label('Environment ')}  ${env.NODE_ENV === 'production' ? chalk.green(env.NODE_ENV) : c.dim(env.NODE_ENV)}`,
     `  ${c.label('Log level   ')}  ${c.dim(env.LOG_LEVEL)}`,
     '',
+    `  ${c.muted('Default: ')}  ${c.code('set_project_root(<workspace>)')} ${c.muted('from the agent session')}`,
     `  ${c.muted('Override:')}  ${c.code('TSA_PROJECT_ROOT=/path bun run dev')}  ${c.muted('or')}  ${c.code('--project /path')}`,
     `  ${c.muted('Help:    ')}  ${c.code('bun run dev --help')}`,
     '',
@@ -129,14 +121,18 @@ function printStartupBanner(env: { TSA_PROJECT_ROOT: string; TSA_DB_PATH: string
 
 async function main(): Promise<void> {
   const env = validateEnv();
-  QUICK_START_PROMPT = getQuickStartPrompt(import.meta.filename, env.TSA_PROJECT_ROOT);
-  printStartupBanner(env);
+  const runtime = new ProjectRuntime({
+    initialProjectRoot: env.TSA_PROJECT_ROOT,
+    dbPathOverride: process.env['TSA_DB_PATH']
+  });
+  const binding = await runtime.initialize();
+  QUICK_START_PROMPT = getQuickStartPrompt(import.meta.filename, binding.project_root);
+  printStartupBanner({
+    ...env,
+    TSA_PROJECT_ROOT: binding.project_root,
+    TSA_DB_PATH: binding.db_path
+  });
 
-  const db = getDatabase(env.TSA_DB_PATH);
-  const dbService = new DatabaseService(db);
-  dbService.initialize();
-
-  let watcher: ReturnType<typeof import('chokidar').watch> | undefined;
   let mcpServer: TsaServer | undefined;
 
   // Shutdown is coordinated through a single promise so cleanup happens in one place.
@@ -150,28 +146,16 @@ async function main(): Promise<void> {
   process.once('SIGTERM', onSignal);
 
   try {
-    const parser = new ParserService();
-    const indexer = new IndexerService(dbService, parser);
-    const symbols = new SymbolService(dbService);
-    const references = new ReferenceService(dbService);
-    const framework = new FrameworkService(env.TSA_PROJECT_ROOT);
-    const config = new ConfigService(env.TSA_PROJECT_ROOT);
-    const insight = new InsightService(env.TSA_PROJECT_ROOT, dbService, framework);
-
-    logger.info({ event: LogEvents.INDEXER_STARTED, projectRoot: env.TSA_PROJECT_ROOT });
-    await indexer.scanProject(env.TSA_PROJECT_ROOT);
-
-    watcher = indexer.startWatcher(env.TSA_PROJECT_ROOT);
-    mcpServer = await startServer({ db: dbService, indexer, symbols, references, framework, config, insight });
+    logger.info({ event: LogEvents.INDEXER_STARTED, projectRoot: runtime.getProjectRoot() });
+    mcpServer = await startServer(runtime);
 
     await shutdownSignal;
   } finally {
     // Drain the MCP server before closing shared resources so in-flight responses do not race cleanup.
     await mcpServer?.drain();
     await mcpServer?.server.close();
-    await watcher?.close();
     await logQueue.destroy();
-    db.close();
+    await runtime.shutdown();
     logger.info({ event: LogEvents.SERVER_SHUTDOWN, reason: 'cleanup done' });
   }
 }
@@ -187,6 +171,8 @@ process.on('unhandledRejection', (reason) => {
 });
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
+  const { detectProjectRoot } = await import('./types/env');
+  QUICK_START_PROMPT = getQuickStartPrompt(import.meta.filename, detectProjectRoot());
   printSetupHelp();
   process.exit(0);
 }
