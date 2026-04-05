@@ -14,6 +14,16 @@ import type { DatabaseService } from './DatabaseService';
 import type { ParserService } from './ParserService';
 
 /**
+ * @description Opaque proof-of-scan token returned by scanProject.
+ * Services that require a populated database accept ScannedDb instead of DatabaseService
+ * directly, so the compiler rejects construction before the scan completes.
+ */
+export interface ScannedDb {
+  /** @description The populated DatabaseService instance. */
+  readonly db: import('./DatabaseService').DatabaseService;
+}
+
+/**
  * @description Result returned by the flush_file tool after forcing an immediate re-index.
  */
 export interface FlushResult {
@@ -115,7 +125,7 @@ export class IndexerService extends BaseService {
    * @param projectRoot - Absolute path to the project root to scan.
    * @returns Promise that resolves when both passes are complete.
    */
-  async scanProject(projectRoot: string): Promise<void> {
+  async scanProject(projectRoot: string): Promise<ScannedDb> {
     this.logInfo(LogEvents.INDEXER_STARTED, { projectRoot });
     const files = this.collectTypeScriptFiles(projectRoot);
 
@@ -143,6 +153,10 @@ export class IndexerService extends BaseService {
     this.rebuildProjectReferences(files);
 
     this.logInfo(LogEvents.INDEXER_STARTED, { projectRoot, indexed, total: files.length });
+
+    // Return the populated db as a ScannedDb token — callers that receive this have
+    // compile-time proof the scan completed before constructing dependent services.
+    return { db: this.db };
   }
 
   /**
