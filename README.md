@@ -18,7 +18,7 @@
 
 ## What Is This?
 
-Specter-tree is a TypeScript-aware MCP server. It builds a live structural index of your codebase so coding agents like Claude Code, Codex, and Cursor can ask for exact symbols, call sites, routes, and config values instead of searching blindly through files.
+Specter-tree is a TypeScript-aware MCP server. It builds a live structural index of your codebase so coding agents — Claude Code, Codex CLI, Cursor, or any MCP stdio client — can ask for exact symbols, call sites, routes, and config values instead of searching blindly through files.
 
 - *Where is `handleLogin` defined?* → Exact file and line number, instantly.
 - *What calls `validateUser`?* → Every call site across your whole project.
@@ -213,7 +213,7 @@ There are two moving parts:
 
 2. **Your AI agent** — Claude Code, Codex, Cursor, or any MCP-compatible client. Once connected, it calls Specter-tree tools during the conversation instead of reading raw files first.
 
-The key point: **the server and your AI agent are separate processes.** The MCP client launches a dedicated server process for the session. Each agent session has its own process and its own index — sessions never share state. The agent then binds that process to the current workspace root using `set_project_root`.
+The key point: **the server and your AI agent are separate processes.** The MCP client launches a dedicated server process per session — one pipe, one process, one index. Two agents on two projects never share state. The agent binds its process to the current workspace root using `set_project_root`.
 
 ```mermaid
 flowchart TB
@@ -252,9 +252,9 @@ flowchart TB
 | File deleted | Immediate | Database entry removed |
 | AI edits a file | Instant | `flush_file` bypasses the debounce |
 | Cold start | One-time scan | Two-pass; hash-skips unchanged files |
-| Project switch | On demand | `set_project_root` tears down old state and scans the new root |
+| Project switch | On demand | `set_project_root` tears down old state and scans the new root. In-flight queries finish before the swap. |
 
-> **Tip:** Add `.tsa/` to your `.gitignore`. The index directory is generated and should not be committed.
+The index for each project lives at `{project_root}/.tsa/index.db` — created automatically, wiped on every bind. Add `.tsa/` to your `.gitignore`; it is generated output and should not be committed.
 
 ---
 
@@ -358,32 +358,6 @@ Reduction           63%                 54%
 | **Total** | **1350–1750 tok** | **500–800 tok** | **54–67%** |
 
 **What the data corrected:** We predicted wrong reads would dominate savings. They did not. The biggest saving came from partial reads. The line number from `find_symbol` means the AI reads 20 lines instead of a 126-line file. That single mechanism accounts for more than half the total saving.
-
----
-
-## Frequently Asked Questions
-
-**Can two projects share one server?**
-
-No — and that is by design. The MCP stdio transport is a one-to-one pipe: one agent session launches one server process. If you have Claude Code open on project A and Cursor open on project B, each spawns its own `bun run src/index.ts` process with its own index. They never share state.
-
-If you switch projects within the same session, call `set_project_root` again. The server wipes the old index, scans the new root, and replaces all services atomically. In-flight queries against the old root finish before the swap takes effect.
-
-**Where does the index live?**
-
-Each project stores its own index at `{project_root}/.tsa/index.db`. The directory is created automatically on first scan and wiped clean on every `set_project_root` call. It is generated output — add `.tsa/` to your `.gitignore` and do not commit it.
-
-**How do I switch projects mid-session?**
-
-Call `set_project_root("/path/to/other-project")`. The server closes the current binding, scans the new root, and is ready in the same time as a cold start. Your agent does not need to reconnect.
-
-**Does it work with my agent?**
-
-Tested with: Claude Code, Codex CLI, Cursor, and any client that supports MCP stdio transport. If your agent can run `bun` and connect to an MCP stdio server, it works.
-
-**The index is stale — what do I do?**
-
-Call `flush_file(file_path)` after any edit to force an immediate re-index of that file, bypassing the 300ms debounce. For a full re-scan, call `index_project(root)`.
 
 ---
 
