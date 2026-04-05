@@ -361,6 +361,34 @@ Reduction           63%                 54%
 
 ---
 
+## Frequently Asked Questions
+
+**Can two projects share one server?**
+
+No. The MCP stdio transport is a one-to-one pipe — one agent session, one server process, one index. If you have Claude Code open on project A and Cursor open on project B, each spawns its own process. They never share state.
+
+**How do I switch projects mid-session?**
+
+Call `set_project_root("/path/to/other-project")`. The server wipes the old index, scans the new root, and replaces all services atomically. In-flight queries finish before the swap. Your agent does not need to reconnect.
+
+**Where does the index live?**
+
+At `{project_root}/.tsa/index.db`. Created automatically on first scan, wiped clean on every `set_project_root` call. Add `.tsa/` to your `.gitignore` — it is generated output and should not be committed.
+
+**Which agents does this work with?**
+
+Tested with Claude Code, Codex CLI, and Cursor. Any client that supports MCP stdio transport and can run `bun` will work.
+
+**The index seems stale — what do I do?**
+
+Call `flush_file(file_path)` after any edit to force an immediate re-index of that file, bypassing the 300ms debounce. For a full re-scan of the whole project, call `index_project(root)`.
+
+**Does it index `node_modules`?**
+
+No. Only your project files are indexed. For external package symbols, fall back to grep.
+
+---
+
 ## Limitations
 
 Specter-tree indexes **your project files only**. External packages in `node_modules` return no results — for those, fall back to grep. Both benchmark runs hit this when looking up methods from the MCP SDK.
