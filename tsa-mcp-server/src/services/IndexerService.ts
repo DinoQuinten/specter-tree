@@ -1,3 +1,9 @@
+/**
+ * @file IndexerService.ts
+ * @description Orchestrates file watching, debounced re-indexing, and full two-pass project scans.
+ * Pass 1 indexes all symbols; pass 2 resolves all cross-file references once every symbol is present.
+ * @module services
+ */
 import { watch } from 'chokidar';
 import { createHash } from 'node:crypto';
 import { readFileSync, statSync, readdirSync } from 'node:fs';
@@ -7,19 +13,27 @@ import { LogEvents } from '../logging/logEvents';
 import type { DatabaseService } from './DatabaseService';
 import type { ParserService } from './ParserService';
 
-/** @interface FlushResult — returned by flush_file tool */
+/**
+ * @description Result returned by the flush_file tool after forcing an immediate re-index.
+ */
 export interface FlushResult {
+  /** @description Whether the re-index completed without errors. */
   success: boolean;
+  /** @description Number of symbols found in the file after re-indexing. */
   symbols_indexed: number;
+  /** @description Wall-clock time taken for the operation in milliseconds. */
   time_ms: number;
 }
 
 /**
  * @class IndexerService
  * @description Orchestrates file watching, debounced re-indexing, and full project scans.
- * scanProject uses a two-pass strategy: index all symbols first, then resolve all references.
- * This ensures cross-file call graph edges resolve correctly regardless of file order.
+ * scanProject uses a two-pass strategy: index all symbols first, then resolve all references,
+ * ensuring cross-file call graph edges resolve correctly regardless of file discovery order.
  * Known limitation: incremental re-index (single file) only rebuilds that file's outgoing refs.
+ * @example
+ * const indexer = new IndexerService(dbService, parserService);
+ * await indexer.scanProject('/repo');
  */
 export class IndexerService extends BaseService {
   private readonly db: DatabaseService;
@@ -27,12 +41,22 @@ export class IndexerService extends BaseService {
   private readonly pendingDebounce = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly DEBOUNCE_MS = 300;
 
+  /**
+   * @description Creates an IndexerService with its database and parser dependencies.
+   * @param db - DatabaseService instance for all symbol and reference persistence.
+   * @param parser - ParserService instance used to extract symbols and references from files.
+   */
   constructor(db: DatabaseService, parser: ParserService) {
     super('IndexerService');
     this.db = db;
     this.parser = parser;
   }
 
+  /**
+   * @description Schedules a debounced re-index for a file changed on disk.
+   * Resets the debounce timer if one is already pending for the same path.
+   * @param filePath - Absolute path of the file to re-index.
+   */
   scheduleReindex(filePath: string): void {
     const existing = this.pendingDebounce.get(filePath);
     if (existing) clearTimeout(existing);
@@ -46,9 +70,11 @@ export class IndexerService extends BaseService {
   }
 
   /**
-   * Re-index a single file: symbols + outgoing references.
-   * Outgoing refs from this file are rebuilt. Refs from other files pointing here
-   * remain valid (IDs are stable after re-index). Rebuilt on next scanProject if stale.
+   * @description Re-indexes a single file: symbols plus outgoing references.
+   * Outgoing refs from this file are rebuilt; refs from other files pointing here
+   * remain valid because symbol IDs are stable after re-index.
+   * @param filePath - Absolute path of the file to re-index.
+   * @returns Promise that resolves when re-indexing is complete.
    */
   async reindexFile(filePath: string): Promise<void> {
     const start = Date.now();
@@ -57,6 +83,12 @@ export class IndexerService extends BaseService {
     this.logInfo(LogEvents.INDEXER_FILE_CHANGED, { filePath, ms: Date.now() - start });
   }
 
+  /**
+   * @description Immediately flushes any pending debounce timer for a file and re-indexes it.
+   * Used by the flush_file tool to force an up-to-date index without waiting for the debounce.
+   * @param filePath - Absolute path of the file to flush and re-index.
+   * @returns FlushResult with success flag, symbol count, and elapsed time.
+   */
   async flushFile(filePath: string): Promise<FlushResult> {
     const pending = this.pendingDebounce.get(filePath);
     if (pending) {
@@ -76,9 +108,12 @@ export class IndexerService extends BaseService {
   }
 
   /**
-   * Two-pass full project scan.
-   * Pass 1: index all symbols (skip unchanged files by hash, but still load into ts-morph).
-   * Pass 2: extract and resolve references for ALL files after all symbols are indexed.
+   * @description Runs a two-pass full project scan.
+   * Pass 1 indexes all symbols, skipping unchanged files by content hash but still loading
+   * them into ts-morph for pass 2. Pass 2 extracts and resolves references for all files
+   * after every symbol is present in the database.
+   * @param projectRoot - Absolute path to the project root to scan.
+   * @returns Promise that resolves when both passes are complete.
    */
   async scanProject(projectRoot: string): Promise<void> {
     this.logInfo(LogEvents.INDEXER_STARTED, { projectRoot });
@@ -110,6 +145,12 @@ export class IndexerService extends BaseService {
     this.logInfo(LogEvents.INDEXER_STARTED, { projectRoot, indexed, total: files.length });
   }
 
+  /**
+   * @description Starts a chokidar file watcher on all .ts and .tsx files in the project root.
+   * Add and change events schedule a debounced re-index; unlink events delete the file's symbols.
+   * @param projectRoot - Absolute path to the project root to watch.
+   * @returns The chokidar FSWatcher instance (caller is responsible for closing it on shutdown).
+   */
   startWatcher(projectRoot: string): ReturnType<typeof watch> {
     const watcher = watch('**/*.{ts,tsx}', {
       cwd: projectRoot,
@@ -128,7 +169,12 @@ export class IndexerService extends BaseService {
     return watcher;
   }
 
-  /** Index symbols only for a file — used in scanProject pass 1 and reindexFile. */
+  /**
+   * @description Indexes symbols for a single file: hashes the content, clears stale rows,
+   * parses symbols, inserts them into the database, and upserts the file record.
+   * Used during scanProject pass 1 and by reindexFile.
+   * @param filePath - Absolute path of the file to index.
+   */
   private async indexSymbols(filePath: string): Promise<void> {
     const start = Date.now();
     const content = readFileSync(filePath, 'utf-8');
@@ -144,7 +190,13 @@ export class IndexerService extends BaseService {
     });
   }
 
-  /** Extract and insert outgoing refs for a file — used in reindexFile and scanProject pass 2. */
+  /**
+   * @description Extracts and inserts outgoing references for a single file.
+   * Clears existing reference rows for the file before inserting the freshly extracted set.
+   * Used in reindexFile and scanProject pass 2.
+   * @param filePath - Absolute path of the file to process.
+   * @param knownNames - Set of all project symbol names used to filter call edges.
+   */
   private indexRefs(filePath: string, knownNames: Set<string>): void {
     this.db.deleteFileReferences(filePath);
     const namedRefs = this.parser.extractReferences(filePath, knownNames);
@@ -152,6 +204,11 @@ export class IndexerService extends BaseService {
     this.db.replaceFileImports(filePath, this.parser.extractFileImports(filePath));
   }
 
+  /**
+   * @description Rebuilds reference edges for all specified files using the current symbol index.
+   * Defaults to every tracked file when no list is provided (used during single-file re-index).
+   * @param files - Optional list of absolute file paths to rebuild references for.
+   */
   private rebuildProjectReferences(files: string[] = this.db.getAllFilePaths()): void {
     const knownNames = this.db.getAllSymbolNames();
     for (const filePath of files) {
@@ -163,6 +220,12 @@ export class IndexerService extends BaseService {
     }
   }
 
+  /**
+   * @description Recursively collects all .ts and .tsx file paths under the project root,
+   * skipping node_modules, dist, .tsa, and .git directories.
+   * @param projectRoot - Absolute path to the directory to walk.
+   * @returns Flat array of absolute file paths for all TypeScript source files found.
+   */
   private collectTypeScriptFiles(projectRoot: string): string[] {
     const files: string[] = [];
     const SKIP = new Set(['node_modules', 'dist', '.tsa', '.git']);

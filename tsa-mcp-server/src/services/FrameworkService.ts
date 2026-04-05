@@ -1,3 +1,10 @@
+/**
+ * @file FrameworkService.ts
+ * @description Monorepo-aware framework detection and route/middleware delegation service.
+ * Detects Express, Next.js, and SvelteKit sub-projects and routes queries to the
+ * appropriate IFrameworkResolver at runtime.
+ * @module services
+ */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -10,21 +17,35 @@ import { SvelteKitResolver } from '../framework/sveltekit-resolver';
 import type { IFrameworkResolver } from '../framework/resolver-interface';
 import type { MiddlewareTrace, RouteConfig, HttpMethod } from '../types/common';
 
+/**
+ * @description Result envelope for trace_middleware containing the ordered trace list
+ * and metadata about the matched framework.
+ */
 interface TraceResult {
+  /** Ordered list of middleware hops for the requested route. */
   traces: MiddlewareTrace[];
+  /** Timing, correlation, and detected framework metadata. */
   _meta: { query_ms: number; correlationId: string; framework: string };
 }
 
 /**
+ * @description Monorepo-aware framework detection service. Builds a prefix-to-resolver
+ * map at construction and delegates trace_middleware / get_route_config calls to the
+ * matched IFrameworkResolver.
  * @class FrameworkService
- * @description Monorepo-aware framework detection. Builds a prefix→resolver map at construction.
- * Delegates trace_middleware / get_route_config to the matched IFrameworkResolver.
+ * @example
+ * const frameworkService = new FrameworkService('/repo');
+ * const result = frameworkService.traceMiddleware('/api/users');
  */
 export class FrameworkService extends BaseService {
   private readonly resolverMap: Record<string, IFrameworkResolver> = {};
   private readonly projectRoot: string;
 
-  /** @param projectRoot Absolute path to the project or monorepo root */
+  /**
+   * @description Creates a new FrameworkService and immediately scans the project root
+   * for supported frameworks.
+   * @param projectRoot - Absolute path to the project or monorepo root.
+   */
   constructor(projectRoot: string) {
     super('FrameworkService');
     this.projectRoot = projectRoot;
@@ -32,18 +53,21 @@ export class FrameworkService extends BaseService {
   }
 
   /**
-   * Get the resolver map (prefix → resolver). Used for testing.
-   * @returns Shallow copy of the resolver map
+   * @description Returns a shallow copy of the internal prefix-to-resolver map.
+   * Primarily used for testing resolver detection.
+   * @returns Shallow copy of the resolver map keyed by path prefix.
    */
   getResolverMap(): Record<string, IFrameworkResolver> {
     return { ...this.resolverMap };
   }
 
   /**
-   * Trace middleware for a route path using the matched framework resolver.
-   * @param routePath URL path
-   * @param method Optional HTTP method
-   * @returns Trace result with framework info
+   * @description Traces the ordered middleware chain for a route path by delegating to
+   * the best-matching framework resolver.
+   * @param routePath - URL path whose middleware chain should be traced (e.g. "/api/users").
+   * @param method - Optional HTTP method filter passed through to the resolver.
+   * @returns Trace result with ordered middleware hops and the matched framework name.
+   * @throws {FrameworkError} - When the matched resolver fails to parse the application files.
    */
   traceMiddleware(routePath: string, method?: HttpMethod): TraceResult {
     const start = Date.now();
@@ -61,8 +85,10 @@ export class FrameworkService extends BaseService {
   }
 
   /**
-   * Get route configuration for a URL path.
-   * @param urlPath URL path to resolve
+   * @description Returns route configuration for a URL path by delegating to the
+   * best-matching framework resolver.
+   * @param urlPath - URL path to resolve (e.g. "/api/users/123").
+   * @returns RouteConfig with handler and file location, or null when no resolver matches.
    */
   getRouteConfig(urlPath: string): RouteConfig | null {
     const [, resolver] = this.resolverFor(urlPath);
@@ -70,6 +96,12 @@ export class FrameworkService extends BaseService {
     return resolver.getRouteConfig(urlPath);
   }
 
+  /**
+   * @description Selects the best-matching resolver for a route path by finding the
+   * longest registered prefix that the path starts with.
+   * @param routePath - URL path to match against registered prefixes.
+   * @returns Tuple of matched prefix and resolver, or ['.', null] when no resolver is registered.
+   */
   private resolverFor(routePath: string): [string, IFrameworkResolver | null] {
     const prefixes = Object.keys(this.resolverMap).sort((a, b) => b.length - a.length);
     for (const prefix of prefixes) {
@@ -80,6 +112,10 @@ export class FrameworkService extends BaseService {
     return ['.', null];
   }
 
+  /**
+   * @description Scans the project root for supported frameworks. Tries the root itself
+   * first, then iterates immediate subdirectories for monorepo layouts.
+   */
   private detectFrameworks(): void {
     if (this.detectAt(this.projectRoot, '.')) return;
     try {
@@ -91,6 +127,13 @@ export class FrameworkService extends BaseService {
     } catch { /* ignore scan errors */ }
   }
 
+  /**
+   * @description Attempts to detect a supported framework in a single directory and
+   * registers a resolver for it when found.
+   * @param dir - Absolute path to the directory to inspect.
+   * @param prefix - Route prefix key to register in the resolver map.
+   * @returns True when a framework was detected and a resolver was registered.
+   */
   private detectAt(dir: string, prefix: string): boolean {
     if (existsSync(join(dir, 'next.config.ts')) || existsSync(join(dir, 'next.config.js'))) {
       this.resolverMap[prefix] = new NextJsResolver(dir);

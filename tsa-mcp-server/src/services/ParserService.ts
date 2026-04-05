@@ -1,3 +1,10 @@
+/**
+ * @file ParserService.ts
+ * @description Extracts symbols and named cross-file references from TypeScript source files
+ * using ts-morph AST parsing. Returns flat symbol lists and NamedRef edges suitable for
+ * two-pass database insertion and call-graph construction.
+ * @module services
+ */
 import { Project, SyntaxKind, type SourceFile, type CallExpression, type MethodDeclaration, type FunctionDeclaration, type Node, type NewExpression, type ClassDeclaration, type GetAccessorDeclaration, type SetAccessorDeclaration, type TypeReferenceNode, type Decorator } from 'ts-morph';
 import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -9,12 +16,21 @@ import type { TsaSymbol, NamedRef } from '../types/common';
 /**
  * @class ParserService
  * @description Extracts symbols and references from TypeScript files using ts-morph AST parsing.
- * Returns flat symbol list with _parentName for two-pass DB insert.
+ * Returns flat symbol lists with _parentName for two-pass DB insertion.
  * Known limitations: cannot resolve DI-injected refs, dynamic dispatch, or string events.
+ * @example
+ * const parser = new ParserService('/repo/tsconfig.json');
+ * const symbols = parser.parseFile('/repo/src/index.ts');
  */
 export class ParserService extends BaseService {
   private readonly project: Project;
 
+  /**
+   * @description Creates a ParserService backed by a ts-morph Project.
+   * When tsConfigPath is provided the project inherits compiler options from that file;
+   * otherwise strict defaults are applied.
+   * @param tsConfigPath - Optional absolute path to a tsconfig.json.
+   */
   constructor(tsConfigPath?: string) {
     super('ParserService');
     this.project = new Project({
@@ -27,10 +43,10 @@ export class ParserService extends BaseService {
   }
 
   /**
-   * Parse a TypeScript file and extract all symbols.
-   * @param filePath Absolute path to .ts or .tsx file
-   * @returns Flat array of TsaSymbol with _parentName for children
-   * @throws IndexError if ts-morph fails to parse
+   * @description Parses a TypeScript file and extracts all symbols.
+   * @param filePath - Absolute path to the .ts or .tsx file to parse.
+   * @returns Flat array of TsaSymbol; child symbols carry a _parentName for two-pass DB insert.
+   * @throws {IndexError} - When ts-morph fails to parse the file.
    */
   parseFile(filePath: string): TsaSymbol[] {
     try {
@@ -55,11 +71,13 @@ export class ParserService extends BaseService {
   }
 
   /**
-   * Extract named references from a file for cross-file resolution.
-   * Returns imports, extends, implements, and calls edges.
+   * @description Extracts named cross-file references from a file: imports, extends, implements,
+   * calls, new-expressions, decorator usages, and type references.
    * The file must have been added to the ts-morph project first (via parseFile or lazy load).
-   * @param filePath Absolute path to the file
-   * @param knownSymbolNames Set of all project symbol names — calls to names outside this set are ignored
+   * @param filePath - Absolute path to the file.
+   * @param knownSymbolNames - Set of all project symbol names; calls to names outside this set are ignored.
+   * @returns Array of NamedRef edges ready for database resolution.
+   * @throws {IndexError} - When reference extraction fails.
    */
   extractReferences(filePath: string, knownSymbolNames: Set<string>): NamedRef[] {
     try {
@@ -187,6 +205,13 @@ export class ParserService extends BaseService {
     }
   }
 
+  /**
+   * @description Extracts all resolved import file paths from a source file.
+   * Used to populate the file_imports table for graph traversal.
+   * @param filePath - Absolute path to the source file.
+   * @returns Unique array of absolute paths for files this source file imports.
+   * @throws {IndexError} - When import extraction fails.
+   */
   extractFileImports(filePath: string): string[] {
     try {
       let sourceFile = this.project.getSourceFile(filePath);
@@ -206,7 +231,13 @@ export class ParserService extends BaseService {
     }
   }
 
-  /** Build map of importedName → resolved absolute file path from all import declarations. */
+  /**
+   * @description Builds a map of imported name to resolved absolute file path
+   * from all import declarations in a source file.
+   * @param sourceFile - The ts-morph SourceFile to scan.
+   * @param filePath - Absolute path of the source file (used for relative resolution).
+   * @returns Map from imported identifier name to its resolved absolute file path.
+   */
   private buildImportMap(sourceFile: SourceFile, filePath: string): Map<string, string> {
     const map = new Map<string, string>();
     for (const imp of sourceFile.getImportDeclarations()) {
@@ -219,7 +250,13 @@ export class ParserService extends BaseService {
     return map;
   }
 
-  /** Resolve a relative import specifier to an absolute .ts file path. Returns null for node_modules or unresolvable. */
+  /**
+   * @description Resolves a relative import specifier to an absolute .ts file path.
+   * Returns null for bare module specifiers (node_modules) or paths that cannot be resolved.
+   * @param sourceFile - Absolute path of the importing file.
+   * @param specifier - The raw module specifier string (e.g. './utils' or '../types/common').
+   * @returns Resolved absolute file path, or null when unresolvable.
+   */
   private resolveImportPath(sourceFile: string, specifier: string): string | null {
     if (!specifier.startsWith('.')) return null;
     const base = join(dirname(sourceFile), specifier);
@@ -230,7 +267,12 @@ export class ParserService extends BaseService {
     return null;
   }
 
-  /** Extract callee name from a CallExpression. Returns last segment for obj.method() calls. */
+  /**
+   * @description Extracts the callee name from a CallExpression.
+   * Returns the last property-access segment for chained calls like obj.method().
+   * @param call - The ts-morph CallExpression node to inspect.
+   * @returns Callee identifier name, or null when the expression shape is unsupported.
+   */
   private getCalleeName(call: CallExpression): string | null {
     const expr = call.getExpression();
     const kind = expr.getKindName();
@@ -242,6 +284,13 @@ export class ParserService extends BaseService {
     return null;
   }
 
+  /**
+   * @description Walks up the AST ancestors of a node to find the enclosing method, function,
+   * constructor, or class declaration that forms the reference source context.
+   * @param node - Any ts-morph Node inside the source file.
+   * @returns Enclosing context with name, optional parent class name, and this-call flag;
+   * or null when the node sits outside any named declaration.
+   */
   private getEnclosingContext(node: Node): { name: string; parentClassName: string | null; isThisCall: boolean } | null {
     const parentClass = node.getFirstAncestorByKind(SyntaxKind.ClassDeclaration) as ClassDeclaration | undefined;
     const parentClassName = parentClass?.getName() ?? null;
@@ -263,6 +312,14 @@ export class ParserService extends BaseService {
     return null;
   }
 
+  /**
+   * @description Checks whether a symbol name is declared locally within the source file.
+   * Used as a fallback when the import map has no entry for the target symbol.
+   * @param sourceFile - The ts-morph SourceFile to search.
+   * @param filePath - Absolute path of the source file, returned as the target when found.
+   * @param symbolName - Symbol name to search for in the file's descendants.
+   * @returns The file path when the symbol is declared locally, or null otherwise.
+   */
   private resolveLocalTargetFile(sourceFile: SourceFile, filePath: string, symbolName: string): string | null {
     const localMatch = sourceFile.getDescendants().some(node => {
       const candidate = node as unknown as { getName?: () => string | undefined };
@@ -271,12 +328,26 @@ export class ParserService extends BaseService {
     return localMatch ? filePath : null;
   }
 
+  /**
+   * @description Extracts the decorator identifier from a Decorator node,
+   * stripping call-expression parentheses and returning the last segment for
+   * namespaced decorators like Ns.Decorator.
+   * @param decorator - The ts-morph Decorator node to inspect.
+   * @returns Decorator name, or null when the name cannot be determined.
+   */
   private getDecoratorName(decorator: Decorator): string | null {
     const text = decorator.getExpression().getText();
     const normalized = text.replace(/\(\)$/, '');
     return normalized.split('.').pop() ?? null;
   }
 
+  /**
+   * @description Extracts all class declarations and their members (methods, getters, setters,
+   * constructors, and properties) from the source file into the symbols accumulator.
+   * @param sourceFile - The ts-morph SourceFile to scan.
+   * @param filePath - Absolute path used to populate file_path on each symbol.
+   * @param symbols - Accumulator array that receives the extracted TsaSymbol entries.
+   */
   private extractClasses(sourceFile: SourceFile, filePath: string, symbols: TsaSymbol[]): void {
     for (const cls of sourceFile.getClasses()) {
       const name = cls.getName() ?? '<anonymous>';
@@ -345,6 +416,12 @@ export class ParserService extends BaseService {
     }
   }
 
+  /**
+   * @description Extracts all interface declarations from the source file.
+   * @param sourceFile - The ts-morph SourceFile to scan.
+   * @param filePath - Absolute path used to populate file_path on each symbol.
+   * @param symbols - Accumulator array that receives the extracted TsaSymbol entries.
+   */
   private extractInterfaces(sourceFile: SourceFile, filePath: string, symbols: TsaSymbol[]): void {
     for (const iface of sourceFile.getInterfaces()) {
       symbols.push({
@@ -356,6 +433,12 @@ export class ParserService extends BaseService {
     }
   }
 
+  /**
+   * @description Extracts all top-level function declarations from the source file.
+   * @param sourceFile - The ts-morph SourceFile to scan.
+   * @param filePath - Absolute path used to populate file_path on each symbol.
+   * @param symbols - Accumulator array that receives the extracted TsaSymbol entries.
+   */
   private extractFunctions(sourceFile: SourceFile, filePath: string, symbols: TsaSymbol[]): void {
     for (const fn of sourceFile.getFunctions()) {
       symbols.push({
@@ -371,6 +454,12 @@ export class ParserService extends BaseService {
     }
   }
 
+  /**
+   * @description Extracts all enum declarations and their members from the source file.
+   * @param sourceFile - The ts-morph SourceFile to scan.
+   * @param filePath - Absolute path used to populate file_path on each symbol.
+   * @param symbols - Accumulator array that receives the extracted TsaSymbol entries.
+   */
   private extractEnums(sourceFile: SourceFile, filePath: string, symbols: TsaSymbol[]): void {
     for (const en of sourceFile.getEnums()) {
       symbols.push({
@@ -390,6 +479,12 @@ export class ParserService extends BaseService {
     }
   }
 
+  /**
+   * @description Extracts all type alias declarations from the source file.
+   * @param sourceFile - The ts-morph SourceFile to scan.
+   * @param filePath - Absolute path used to populate file_path on each symbol.
+   * @param symbols - Accumulator array that receives the extracted TsaSymbol entries.
+   */
   private extractTypeAliases(sourceFile: SourceFile, filePath: string, symbols: TsaSymbol[]): void {
     for (const ta of sourceFile.getTypeAliases()) {
       symbols.push({
@@ -401,6 +496,13 @@ export class ParserService extends BaseService {
     }
   }
 
+  /**
+   * @description Extracts exported variable declarations from the source file.
+   * Only exported variables are included; unexported constants and locals are ignored.
+   * @param sourceFile - The ts-morph SourceFile to scan.
+   * @param filePath - Absolute path used to populate file_path on each symbol.
+   * @param symbols - Accumulator array that receives the extracted TsaSymbol entries.
+   */
   private extractVariables(sourceFile: SourceFile, filePath: string, symbols: TsaSymbol[]): void {
     for (const stmt of sourceFile.getVariableStatements()) {
       if (!stmt.isExported()) continue;
@@ -416,6 +518,12 @@ export class ParserService extends BaseService {
     }
   }
 
+  /**
+   * @description Collects modifier keywords (export, abstract, async, static) from an AST node
+   * using duck-typed method calls to stay compatible with the diverse ts-morph node hierarchy.
+   * @param node - Any ts-morph AST node that may expose modifier accessor methods.
+   * @returns Space-separated modifier string, or an empty string when none apply.
+   */
   private getMods(node: unknown): string {
     const n = node as Record<string, unknown>;
     const mods: string[] = [];
@@ -426,6 +534,11 @@ export class ParserService extends BaseService {
     return mods.join(' ');
   }
 
+  /**
+   * @description Reads the JSDoc comment text from an AST node that exposes getJsDocs().
+   * @param node - Any ts-morph AST node that may carry JSDoc comments.
+   * @returns Concatenated JSDoc comment text, or null when none is present.
+   */
   private getDoc(node: unknown): string | null {
     const n = node as Record<string, unknown>;
     if (typeof n['getJsDocs'] !== 'function') return null;

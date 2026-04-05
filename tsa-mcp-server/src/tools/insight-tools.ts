@@ -70,7 +70,7 @@ export const INSIGHT_TOOL_DEFINITIONS: Tool[] = [
   },
   {
     name: 'explain_flow',
-    description: 'Build a compact structural flow from a symbol, file, or route path, including middleware for route entrypoints.',
+    description: 'Build a compact structural flow from a symbol, file, or route path, including middleware for route entrypoints. Exactly one of symbol_name, file_path, or route_path must be provided.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -104,6 +104,6 @@ export function handleInsightTool(toolName: string, rawInput: unknown, service: 
     case 'explain_flow':
       return service.explainFlow(ExplainFlowSchema.parse(rawInput));
     default:
-      return null;
+      throw new Error(`Unreachable: unknown tool ${toolName}`);
   }
 }

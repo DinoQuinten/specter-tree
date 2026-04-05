@@ -1,44 +1,127 @@
+/**
+ * @file ReferenceService.ts
+ * @description Layer 2 call-graph service exposing get_callers, get_implementations,
+ * get_hierarchy, and get_related_files against the indexed reference database.
+ * @module services
+ */
 import { randomUUID } from 'node:crypto';
 import { BaseService } from './BaseService';
 import { LogEvents } from '../logging/logEvents';
 import type { DatabaseService } from './DatabaseService';
 import type { ToolResult } from '../types/common';
 
+/**
+ * @description Input contract for get_callers.
+ */
 interface GetCallersInput { symbol_name: string; class_name?: string; }
+
+/**
+ * @description Input contract for get_implementations.
+ */
 interface GetImplementationsInput { interface_name: string; }
+
+/**
+ * @description Input contract for get_hierarchy.
+ */
 interface GetHierarchyInput { class_name: string; }
+
+/**
+ * @description Input contract for get_related_files.
+ */
 interface GetRelatedFilesInput { file_path: string; }
 
-export interface CallerResult { caller_name: string; caller_class: string | null; caller_file: string; line: number; confidence: string; }
-export interface ImplementorResult { class_name: string; file_path: string; line: number; }
-export interface HierarchyEntry { name: string; file_path: string; line: number; }
-export interface HierarchyResult {
-  extends: HierarchyEntry[]; implements: HierarchyEntry[];
-  extended_by: HierarchyEntry[]; implemented_by: HierarchyEntry[];
-  _meta: { query_ms: number; correlationId: string };
+/**
+ * @description A single call-site that invokes the queried symbol.
+ */
+export interface CallerResult {
+  /** Name of the calling function or method. */
+  caller_name: string;
+  /** Containing class name, or null for module-level callers. */
+  caller_class: string | null;
+  /** Absolute path to the file containing the call site. */
+  caller_file: string;
+  /** 1-based line number of the call expression. */
+  line: number;
+  /** Index confidence level for this edge (e.g. "high", "best-effort"). */
+  confidence: string;
 }
-export interface RelatedFilesResult {
-  imports_from: string[]; imported_by: string[];
+
+/**
+ * @description A class that implements a queried interface.
+ */
+export interface ImplementorResult {
+  /** Name of the implementing class. */
+  class_name: string;
+  /** Absolute path to the file declaring the class. */
+  file_path: string;
+  /** 1-based line number of the class declaration. */
+  line: number;
+}
+
+/**
+ * @description A single entry in a class hierarchy list.
+ */
+export interface HierarchyEntry {
+  /** Declared name of the class or interface. */
+  name: string;
+  /** Absolute path to the file containing the declaration. */
+  file_path: string;
+  /** 1-based line number of the declaration. */
+  line: number;
+}
+
+/**
+ * @description Full inheritance and implementation hierarchy for a class.
+ */
+export interface HierarchyResult {
+  /** Classes or interfaces this class directly extends. */
+  extends: HierarchyEntry[];
+  /** Interfaces this class directly implements. */
+  implements: HierarchyEntry[];
+  /** Classes that directly extend this class. */
+  extended_by: HierarchyEntry[];
+  /** Classes that directly implement this class (when it is an interface). */
+  implemented_by: HierarchyEntry[];
+  /** Timing and correlation metadata. */
   _meta: { query_ms: number; correlationId: string };
 }
 
 /**
+ * @description Import graph for a file, listing its upstream and downstream dependencies.
+ */
+export interface RelatedFilesResult {
+  /** Absolute paths of files this file imports. */
+  imports_from: string[];
+  /** Absolute paths of files that import this file. */
+  imported_by: string[];
+  /** Timing and correlation metadata. */
+  _meta: { query_ms: number; correlationId: string };
+}
+
+/**
+ * @description Provides call-graph reference and hierarchy queries over the TSA index.
  * @class ReferenceService
- * @description Handles Layer 2 call graph tools: get_callers, get_implementations, get_hierarchy, get_related_files.
+ * @example
+ * const referenceService = new ReferenceService(dbService);
+ * const callers = referenceService.getCallers({ symbol_name: 'handleRequest' });
  */
 export class ReferenceService extends BaseService {
   private readonly db: DatabaseService;
 
-  /** @param db DatabaseService instance */
+  /**
+   * @description Creates a new ReferenceService backed by the provided database connection.
+   * @param db - DatabaseService instance used for all reference queries.
+   */
   constructor(db: DatabaseService) {
     super('ReferenceService');
     this.db = db;
   }
 
   /**
-   * Get all callers of a named symbol.
-   * @param input get_callers tool input
-   * @returns Caller results with confidence level and best-effort warning
+   * @description Returns all indexed call sites that invoke the named symbol,
+   * deduplicated across multiple matching declarations.
+   * @param input - Request containing a symbol name and optional class disambiguation.
+   * @returns Caller results with confidence level and a best-effort accuracy warning.
    */
   getCallers(input: GetCallersInput): ToolResult<CallerResult> {
     const start = Date.now();
@@ -69,8 +152,10 @@ export class ReferenceService extends BaseService {
   }
 
   /**
-   * Get all classes that implement a given interface.
-   * @param input get_implementations tool input
+   * @description Returns all classes that implement the named interface, deduplicated
+   * across multiple matching interface declarations.
+   * @param input - Request containing the interface name to look up.
+   * @returns Implementor results listing each implementing class and its file location.
    */
   getImplementations(input: GetImplementationsInput): ToolResult<ImplementorResult> {
     const start = Date.now();
@@ -90,8 +175,10 @@ export class ReferenceService extends BaseService {
   }
 
   /**
-   * Get full inheritance/implementation hierarchy for a class.
-   * @param input get_hierarchy tool input
+   * @description Returns the full inheritance and implementation hierarchy for a class,
+   * merging data from all matching class declarations.
+   * @param input - Request containing the class name to look up.
+   * @returns Deduplicated hierarchy entries for ancestors, descendants, and implementors.
    */
   getHierarchy(input: GetHierarchyInput): HierarchyResult {
     const start = Date.now();
@@ -120,8 +207,10 @@ export class ReferenceService extends BaseService {
   }
 
   /**
-   * Get files this file imports from and files that import this file.
-   * @param input get_related_files tool input
+   * @description Returns the import graph edges for a file: the files it imports and the
+   * files that import it.
+   * @param input - Request containing the absolute file path to look up.
+   * @returns Bidirectional import graph entries with timing metadata.
    */
   getRelatedFiles(input: GetRelatedFilesInput): RelatedFilesResult {
     const start = Date.now();

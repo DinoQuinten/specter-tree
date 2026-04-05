@@ -1,3 +1,8 @@
+/**
+ * @file symbol-tools.ts
+ * @description MCP tool definitions and request dispatch for symbol look-up and search tools.
+ * @module tools
+ */
 import { z } from 'zod';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { SymbolService } from '../services/SymbolService';
@@ -77,8 +82,12 @@ export const SYMBOL_TOOL_DEFINITIONS: Tool[] = [
 ];
 
 /**
- * @function handleSymbolTool
- * @description Dispatch symbol tool calls to SymbolService after Zod validation.
+ * @description Dispatches symbol-lookup MCP tools after validating request payloads.
+ * @param toolName - MCP tool name requested by the client.
+ * @param rawInput - Untrusted tool input supplied through the MCP transport.
+ * @param service - Symbol service instance that owns the implementation.
+ * @returns Tool-specific response payload.
+ * @throws {Error} - When validation fails or the service is unavailable.
  */
 export function handleSymbolTool(toolName: string, rawInput: unknown, service: SymbolService): unknown {
   if (!service) throw new Error('SymbolService is not available');
@@ -92,6 +101,6 @@ export function handleSymbolTool(toolName: string, rawInput: unknown, service: S
     case 'get_file_symbols':
       return service.getFileSymbols(GetFileSymbolsSchema.parse(rawInput));
     default:
-      return null;
+      throw new Error(`Unreachable: unknown tool ${toolName}`);
   }
 }

@@ -1,3 +1,9 @@
+/**
+ * @file reference-tools.ts
+ * @description MCP tool definitions and request dispatch for call-graph, hierarchy, and
+ * file-relationship reference tools.
+ * @module tools
+ */
 import { z } from 'zod';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ReferenceService } from '../services/ReferenceService';
@@ -68,8 +74,12 @@ export const REFERENCE_TOOL_DEFINITIONS: Tool[] = [
 ];
 
 /**
- * @function handleReferenceTool
- * @description Dispatch reference tool calls to ReferenceService after Zod validation.
+ * @description Dispatches call-graph and reference MCP tools after validating request payloads.
+ * @param toolName - MCP tool name requested by the client.
+ * @param rawInput - Untrusted tool input supplied through the MCP transport.
+ * @param service - Reference service instance that owns the implementation.
+ * @returns Tool-specific response payload.
+ * @throws {Error} - When validation fails or the service is unavailable.
  */
 export function handleReferenceTool(toolName: string, rawInput: unknown, service: ReferenceService): unknown {
   if (!service) throw new Error('ReferenceService is not available');
@@ -83,6 +93,6 @@ export function handleReferenceTool(toolName: string, rawInput: unknown, service
     case 'get_related_files':
       return service.getRelatedFiles(GetRelatedFilesSchema.parse(rawInput));
     default:
-      return null;
+      throw new Error(`Unreachable: unknown tool ${toolName}`);
   }
 }

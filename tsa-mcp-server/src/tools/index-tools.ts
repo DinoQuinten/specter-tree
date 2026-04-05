@@ -1,3 +1,8 @@
+/**
+ * @file index-tools.ts
+ * @description MCP tool definitions and request dispatch for project indexing and file-flush tools.
+ * @module tools
+ */
 import { z } from 'zod';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { IndexerService } from '../services/IndexerService';
@@ -36,8 +41,12 @@ export const INDEX_TOOL_DEFINITIONS: Tool[] = [
 ];
 
 /**
- * @function handleIndexTool
- * @description Dispatch index tool calls to IndexerService after Zod validation.
+ * @description Dispatches indexing MCP tools after validating request payloads.
+ * @param toolName - MCP tool name requested by the client.
+ * @param rawInput - Untrusted tool input supplied through the MCP transport.
+ * @param service - Indexer service instance that owns the implementation.
+ * @returns Tool-specific response payload.
+ * @throws {Error} - When validation fails or the service is unavailable.
  */
 export async function handleIndexTool(toolName: string, rawInput: unknown, service: IndexerService): Promise<unknown> {
   if (!service) throw new Error('IndexerService is not available');
@@ -51,6 +60,6 @@ export async function handleIndexTool(toolName: string, rawInput: unknown, servi
       return { success: true, project_root, time_ms: Date.now() - start };
     }
     default:
-      return null;
+      throw new Error(`Unreachable: unknown tool ${toolName}`);
   }
 }

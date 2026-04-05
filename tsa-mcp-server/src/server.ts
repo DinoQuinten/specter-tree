@@ -2,7 +2,7 @@
  * @file server.ts
  * @description MCP transport wiring for the TSA server, including tools, resources, and
  * graceful in-flight request draining.
- * @module services
+ * @module server
  */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -23,6 +23,7 @@ import type { ReferenceService } from './services/ReferenceService';
 import type { FrameworkService } from './services/FrameworkService';
 import type { ConfigService } from './services/ConfigService';
 import type { InsightService } from './services/InsightService';
+import pkg from '../package.json' with { type: 'json' };
 import { SYMBOL_TOOL_DEFINITIONS, handleSymbolTool } from './tools/symbol-tools';
 import { REFERENCE_TOOL_DEFINITIONS, handleReferenceTool } from './tools/reference-tools';
 import { INDEX_TOOL_DEFINITIONS, handleIndexTool } from './tools/index-tools';
@@ -43,27 +44,46 @@ const INDEX_TOOL_NAMES = new Set(INDEX_TOOL_DEFINITIONS.map(t => t.name));
 const RUNTIME_TOOL_NAMES = new Set(RUNTIME_TOOL_DEFINITIONS.map(t => t.name));
 const INSIGHT_TOOL_NAMES = new Set(INSIGHT_TOOL_DEFINITIONS.map(t => t.name));
 
+/**
+ * @description Fully initialised service instances passed into the server factory.
+ */
 interface ServiceContainer {
+  /** Database access layer. */
   db: DatabaseService;
+  /** File watcher and incremental indexer. */
   indexer: IndexerService;
+  /** Symbol look-up and search. */
   symbols: SymbolService;
+  /** Call-graph and reference queries. */
   references: ReferenceService;
+  /** Framework detection and route/middleware tracing. */
   framework: FrameworkService;
+  /** Project config key resolution. */
   config: ConfigService;
+  /** File-summary and edit-target insight tools. */
   insight: InsightService;
 }
 
-/** Wraps a Server with an in-flight request counter for graceful drain. */
+/**
+ * @description Wraps an MCP Server with an in-flight request counter for graceful drain
+ * on shutdown.
+ */
 export interface TsaServer {
+  /** The underlying MCP Server instance. */
   server: Server;
-  /** Resolves when all in-flight requests complete. Timeout after ms (default 5000). */
+  /**
+   * @description Resolves when all in-flight requests complete, or after a timeout.
+   * @param timeoutMs - Maximum milliseconds to wait before force-resolving (default 5000).
+   * @returns A promise that settles once the drain condition is met.
+   */
   drain(timeoutMs?: number): Promise<void>;
 }
 
 /**
- * @function createTsaServer
- * @description Build and wire up the MCP Server instance with all tool handlers.
- * Does not connect transport — call server.connect(transport) after.
+ * @description Builds and wires the MCP Server instance with all tool and resource handlers.
+ * Does not connect a transport — call `server.connect(transport)` separately.
+ * @param services - Fully initialised service container.
+ * @returns A TsaServer wrapping the configured MCP Server with a drain helper.
  */
 export function createTsaServer(services: ServiceContainer): TsaServer {
   let inFlight = 0;
@@ -81,7 +101,7 @@ export function createTsaServer(services: ServiceContainer): TsaServer {
   };
 
   const server = new Server(
-    { name: 'tsa-mcp-server', version: '1.0.0' },
+    { name: 'tsa-mcp-server', version: pkg.version },
     { capabilities: { tools: {}, resources: {} } }
   );
 
@@ -209,8 +229,9 @@ export function createTsaServer(services: ServiceContainer): TsaServer {
 }
 
 /**
- * @function startServer
- * @description Connect server to StdioServerTransport and begin serving.
+ * @description Connects the MCP server to a StdioServerTransport and begins serving requests.
+ * @param services - Fully initialised service container.
+ * @returns The running TsaServer instance with an active transport connection.
  */
 export async function startServer(services: ServiceContainer): Promise<TsaServer> {
   const tsaServer = createTsaServer(services);

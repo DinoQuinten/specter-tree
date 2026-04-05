@@ -1,3 +1,9 @@
+/**
+ * @file runtime-tools.ts
+ * @description MCP tool definitions and request dispatch for middleware tracing, route resolution,
+ * and project config tools.
+ * @module tools
+ */
 import { z } from 'zod';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { FrameworkService } from '../services/FrameworkService';
@@ -54,8 +60,13 @@ export const RUNTIME_TOOL_DEFINITIONS: Tool[] = [
 ];
 
 /**
- * @function handleRuntimeTool
- * @description Dispatch runtime tool calls to FrameworkService/ConfigService after Zod validation.
+ * @description Dispatches runtime and configuration MCP tools after validating request payloads.
+ * @param toolName - MCP tool name requested by the client.
+ * @param rawInput - Untrusted tool input supplied through the MCP transport.
+ * @param frameworkService - Framework service instance used for middleware and route operations.
+ * @param configService - Config service instance used for config key resolution.
+ * @returns Tool-specific response payload.
+ * @throws {Error} - When validation fails or a required service is unavailable.
  */
 export function handleRuntimeTool(
   toolName: string,
@@ -79,6 +90,6 @@ export function handleRuntimeTool(
       return configService.resolveConfig({ config_key });
     }
     default:
-      return null;
+      throw new Error(`Unreachable: unknown tool ${toolName}`);
   }
 }

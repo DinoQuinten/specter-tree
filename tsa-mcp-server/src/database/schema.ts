@@ -1,3 +1,9 @@
+/**
+ * @file schema.ts
+ * @description Exports the full DDL string for all TSA tables and indexes, loaded from
+ * the migration SQL file at module initialisation time.
+ * @module database
+ */
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

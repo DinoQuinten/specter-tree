@@ -1,4 +1,16 @@
 #!/bin/sh
+
+if command -v gitleaks > /dev/null 2>&1; then
+  echo "Checking for secrets in staged files..."
+  gitleaks protect --staged
+  if [ $? -ne 0 ]; then
+    echo "Secrets detected. Commit blocked."
+    exit 1
+  fi
+else
+  echo "Warning: gitleaks not installed. Skipping secret scan. Run: brew install gitleaks"
+fi
+
 echo "Checking for duplicate functions/classes..."
 sh .husky/check-duplicates.sh
 if [ $? -ne 0 ]; then

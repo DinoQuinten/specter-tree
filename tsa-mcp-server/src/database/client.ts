@@ -1,3 +1,8 @@
+/**
+ * @file client.ts
+ * @description Singleton bun:sqlite Database factory with WAL mode and foreign-key enforcement.
+ * @module database
+ */
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -5,9 +10,11 @@ import { dirname } from 'node:path';
 let _db: Database | null = null;
 
 /**
- * Get or create the singleton bun:sqlite Database instance.
- * @param dbPath Absolute path to the SQLite database file
- * @returns Singleton Database instance
+ * @description Returns the singleton bun:sqlite Database instance, creating it on first call.
+ * Enables WAL journal mode and foreign-key enforcement on every new connection.
+ * @param dbPath - Absolute path to the SQLite database file.
+ * @returns Singleton Database instance.
+ * @throws {Error} - When the database file cannot be created or opened.
  */
 export function getDatabase(dbPath: string): Database {
   if (_db) return _db;

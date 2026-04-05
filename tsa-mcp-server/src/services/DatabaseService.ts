@@ -1,3 +1,9 @@
+/**
+ * @file DatabaseService.ts
+ * @description All bun:sqlite read/write operations for the TSA symbol and reference graph.
+ * Inject a Database instance for testability — use an in-memory database in tests.
+ * @module services
+ */
 import type { Database } from 'bun:sqlite';
 import { BaseService } from './BaseService';
 import { QueryError } from '../errors/QueryError';
@@ -9,14 +15,20 @@ import { SCHEMA_DDL } from '../database/schema';
 /**
  * @class DatabaseService
  * @description Owns all bun:sqlite read/write operations for TSA.
- * Inject Database instance for testability (use :memory: in tests).
+ * Inject a Database instance for testability (use :memory: in tests).
+ * @example
+ * const db = new Database(':memory:');
+ * const dbService = new DatabaseService(db);
+ * dbService.initialize();
  */
 export class DatabaseService extends BaseService {
   private readonly db: Database;
   private initialized = false;
 
   /**
-   * @param db A bun:sqlite Database instance
+   * @description Creates a new DatabaseService wrapping the provided bun:sqlite instance.
+   * Call initialize() after construction to apply the schema DDL.
+   * @param db - A bun:sqlite Database instance (file-backed or :memory:).
    */
   constructor(db: Database) {
     super('DatabaseService');
@@ -24,8 +36,9 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * Run DDL migration to create all tables and indexes. Safe to call multiple times.
-   * @throws QueryError if schema initialization fails
+   * @description Runs the DDL migration to create all tables and indexes.
+   * Safe to call multiple times — subsequent calls are no-ops.
+   * @throws {QueryError} - When schema initialization fails.
    */
   initialize(): void {
     if (this.initialized) return;
@@ -39,8 +52,8 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * Get current schema version from project_meta.
-   * @returns Schema version number, 0 if not set
+   * @description Reads the current schema version from the project_meta table.
+   * @returns Schema version number, or 0 when the key has not been set.
    */
   getSchemaVersion(): number {
     try {
@@ -52,9 +65,11 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * Insert symbols in bulk using a transaction with two-pass parent_id resolution.
-   * @param symbols Array of TsaSymbol — _parentName triggers second-pass resolution
-   * @throws QueryError on insert failure
+   * @description Inserts symbols in bulk using a transaction with two-pass parent_id resolution.
+   * Top-level symbols are written first; children with a _parentName are inserted in a second
+   * pass so parent IDs are available for the foreign-key link.
+   * @param symbols - Array of TsaSymbol to persist. Symbols with _parentName trigger second-pass resolution.
+   * @throws {QueryError} - When the insert transaction fails.
    */
   insertSymbols(symbols: TsaSymbol[]): void {
     const insertStmt = this.db.prepare(`
@@ -87,9 +102,10 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * Delete all symbols (and cascading references) for a file.
-   * @param filePath File path to clear
-   * @throws QueryError on failure
+   * @description Deletes all symbols (and their cascading references) for a file.
+   * Called before re-indexing a changed file to avoid stale rows.
+   * @param filePath - Absolute path of the file whose symbols should be removed.
+   * @throws {QueryError} - When the delete statement fails.
    */
   deleteFileSymbols(filePath: string): void {
     try {
@@ -101,9 +117,11 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * Exact-name lookup for find_symbol tool.
-   * @param name Symbol name
-   * @param kind Optional kind filter
+   * @description Exact-name lookup for the find_symbol tool.
+   * @param name - Symbol name to match exactly.
+   * @param kind - Optional kind filter (e.g. 'class', 'function').
+   * @returns All matching symbol rows.
+   * @throws {QueryError} - When the query fails.
    */
   querySymbolsByName(name: string, kind?: string): SymbolRow[] {
     try {
@@ -116,6 +134,15 @@ export class DatabaseService extends BaseService {
     }
   }
 
+  /**
+   * @description Looks up symbols by name scoped to a specific parent class.
+   * Useful for disambiguating methods that share a name across multiple classes.
+   * @param name - Symbol name to match exactly.
+   * @param parentName - Name of the enclosing class.
+   * @param kind - Optional kind filter.
+   * @returns Matching symbol rows that are direct children of the named class.
+   * @throws {QueryError} - When the query fails.
+   */
   querySymbolsByNameAndParent(name: string, parentName: string, kind?: string): SymbolRow[] {
     try {
       if (kind) {
@@ -139,10 +166,12 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * LIKE search for search_symbols tool.
-   * @param query Partial name to match
-   * @param kind Optional kind filter
-   * @param limit Maximum results
+   * @description LIKE search for the search_symbols tool.
+   * @param query - Partial name to match (wrapped in % wildcards).
+   * @param kind - Optional kind filter.
+   * @param limit - Maximum number of results to return. Defaults to 20.
+   * @returns Symbol rows whose names contain the query substring.
+   * @throws {QueryError} - When the query fails.
    */
   searchSymbols(query: string, kind?: string, limit: number = 20): SymbolRow[] {
     try {
@@ -157,8 +186,10 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * Get all methods/members of a class by class name.
-   * @param className Name of the class
+   * @description Fetches all methods and members of a class by class name.
+   * @param className - Name of the class whose members to retrieve.
+   * @returns Symbol rows that are direct children of the named class.
+   * @throws {QueryError} - When the query fails.
    */
   getMethodsByClassName(className: string): SymbolRow[] {
     try {
@@ -174,9 +205,11 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * Get all symbols in a file, optionally filtered by kind.
-   * @param filePath Path to the file
-   * @param kind Optional kind filter
+   * @description Fetches all symbols in a file, optionally filtered by kind.
+   * @param filePath - Absolute path to the source file.
+   * @param kind - Optional kind filter (e.g. 'class', 'interface').
+   * @returns All symbol rows belonging to the file.
+   * @throws {QueryError} - When the query fails.
    */
   getSymbolsByFile(filePath: string, kind?: string): SymbolRow[] {
     try {
@@ -190,9 +223,9 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * Insert call graph edges in bulk.
-   * @param refs Array of TsaReference edges
-   * @throws QueryError on failure
+   * @description Inserts call graph edges in bulk inside a single transaction.
+   * @param refs - Array of TsaReference edges to persist.
+   * @throws {QueryError} - When the insert transaction fails.
    */
   insertReferences(refs: TsaReference[]): void {
     if (refs.length === 0) return;
@@ -214,8 +247,10 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * Get all callers of a symbol.
-   * @param targetSymbolId ID of the callee symbol
+   * @description Fetches all callers of a symbol by joining the references table with symbols.
+   * @param targetSymbolId - Primary key of the callee symbol.
+   * @returns Reference rows enriched with caller name, file, line, and class.
+   * @throws {QueryError} - When the query fails.
    */
   getCallers(targetSymbolId: number): ReferenceRow[] {
     try {
@@ -233,8 +268,10 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * Get all classes that implement a given interface.
-   * @param interfaceSymbolId ID of the interface symbol
+   * @description Fetches all classes that implement a given interface.
+   * @param interfaceSymbolId - Primary key of the interface symbol.
+   * @returns Reference rows enriched with class name and file path.
+   * @throws {QueryError} - When the query fails.
    */
   getImplementors(interfaceSymbolId: number): ReferenceRow[] {
     try {
@@ -250,8 +287,11 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * Get full class hierarchy data.
-   * @param classSymbolId ID of the class symbol
+   * @description Fetches the full class hierarchy for a symbol: what it extends, what it
+   * implements, which classes extend it, and which classes implement it.
+   * @param classSymbolId - Primary key of the class symbol.
+   * @returns Object containing four symbol-row arrays for each hierarchy direction.
+   * @throws {QueryError} - When any of the four queries fail.
    */
   getHierarchyData(classSymbolId: number): { extends: SymbolRow[], implements: SymbolRow[], extended_by: SymbolRow[], implemented_by: SymbolRow[] } {
     try {
@@ -298,8 +338,11 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * Get files this file imports from and files that import this file.
-   * @param filePath The file to get relationships for
+   * @description Returns the import relationships for a file: files it imports from and
+   * files that import it.
+   * @param filePath - Absolute path of the file to query.
+   * @returns Object with imports_from and imported_by file path arrays.
+   * @throws {QueryError} - When the query fails.
    */
   getRelatedFiles(filePath: string): { imports_from: string[], imported_by: string[] } {
     try {
@@ -314,8 +357,9 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * Upsert a file record for incremental indexing.
-   * @param record File record to store
+   * @description Upserts a file record used for hash-based incremental indexing.
+   * @param record - File record containing path, hash, modification time, and index stats.
+   * @throws {QueryError} - When the upsert fails.
    */
   upsertFile(record: FileRecord): void {
     try {
@@ -329,9 +373,10 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * Get a file record by path for hash-based change detection.
-   * @param filePath Path to look up
-   * @returns FileRow or null if not indexed
+   * @description Fetches a file record by path for hash-based change detection.
+   * @param filePath - Absolute path to look up.
+   * @returns The FileRow, or null when the file has not been indexed yet.
+   * @throws {QueryError} - When the query fails.
    */
   getFileRecord(filePath: string): FileRow | null {
     try {
@@ -342,8 +387,9 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * Get all tracked file paths.
-   * @returns Array of file paths
+   * @description Fetches all tracked file paths from the files table.
+   * @returns Array of absolute file paths that have been indexed.
+   * @throws {QueryError} - When the query fails.
    */
   getAllFilePaths(): string[] {
     try {
@@ -354,8 +400,10 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * Get all distinct symbol names in the index. Used to filter call graph extraction
-   * to project-defined symbols only.
+   * @description Fetches all distinct symbol names in the index.
+   * Used to filter call graph extraction to project-defined symbols only.
+   * @returns Set of every unique symbol name currently indexed.
+   * @throws {QueryError} - When the query fails.
    */
   getAllSymbolNames(): Set<string> {
     try {
@@ -367,8 +415,10 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * Delete all references whose source symbol belongs to the given file.
-   * Called when refreshing refs for a file without re-indexing its symbols.
+   * @description Deletes all references whose source symbol belongs to the given file.
+   * Called when refreshing reference edges for a file without re-indexing its symbols.
+   * @param filePath - Absolute path of the file whose outgoing references should be cleared.
+   * @throws {QueryError} - When the delete statement fails.
    */
   deleteFileReferences(filePath: string): void {
     try {
@@ -382,6 +432,13 @@ export class DatabaseService extends BaseService {
     }
   }
 
+  /**
+   * @description Replaces the full import-edge set for a file atomically.
+   * Deletes existing entries and inserts the new resolved target paths in one transaction.
+   * @param filePath - Absolute path of the source file.
+   * @param imports - Resolved absolute paths of all files this file imports.
+   * @throws {QueryError} - When the replacement transaction fails.
+   */
   replaceFileImports(filePath: string, imports: string[]): void {
     try {
       this.db.run('DELETE FROM file_imports WHERE source_file = ?', [filePath]);
@@ -397,6 +454,12 @@ export class DatabaseService extends BaseService {
     }
   }
 
+  /**
+   * @description Deletes all file_imports rows where the given file is either the source or the target.
+   * Called when a file is removed from the project to keep the import graph consistent.
+   * @param filePath - Absolute path of the file to remove from both sides of the import graph.
+   * @throws {QueryError} - When the delete statement fails.
+   */
   deleteFileImports(filePath: string): void {
     try {
       this.db.run('DELETE FROM file_imports WHERE source_file = ? OR target_file = ?', [filePath, filePath]);
@@ -406,10 +469,12 @@ export class DatabaseService extends BaseService {
   }
 
   /**
-   * Resolve NamedRef[] to symbol IDs and insert into the references table.
-   * sourceName='<file>' resolves to any symbol in sourceFile (for import edges).
-   * targetFile present → resolve by (name + file_path); absent → resolve by name only.
+   * @description Resolves NamedRef[] to symbol IDs and inserts them into the references table.
+   * sourceName='<file>' resolves to any symbol in the source file (for import edges).
+   * When targetFile is present the target is resolved by (name + file_path); otherwise by name only.
    * Skips any ref where source or target cannot be resolved.
+   * @param refs - Named reference edges produced by ParserService.extractReferences.
+   * @throws {QueryError} - When the resolution transaction fails.
    */
   resolveAndInsertNamedRefs(refs: NamedRef[]): void {
     if (refs.length === 0) return;
