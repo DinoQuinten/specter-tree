@@ -8,9 +8,10 @@ import { ReferenceService } from './services/ReferenceService';
 import { FrameworkService } from './services/FrameworkService';
 import { ConfigService } from './services/ConfigService';
 import { startServer } from './server';
+import type { TsaServer } from './server';
 import { logger } from './logging/logger';
-import { LogEvents } from './logging/logEvents';
 import { logQueue } from './logging/logQueue';
+import { LogEvents } from './logging/logEvents';
 
 async function main(): Promise<void> {
   const env = validateEnv();
@@ -19,32 +20,57 @@ async function main(): Promise<void> {
   const dbService = new DatabaseService(db);
   dbService.initialize();
 
-  const parser = new ParserService();
-  const indexer = new IndexerService(dbService, parser);
-  const symbols = new SymbolService(dbService);
-  const references = new ReferenceService(dbService);
-  const framework = new FrameworkService(env.TSA_PROJECT_ROOT);
-  const config = new ConfigService(env.TSA_PROJECT_ROOT);
+  let watcher: ReturnType<typeof import('chokidar').watch> | undefined;
+  let mcpServer: TsaServer | undefined;
 
-  logger.info({ event: LogEvents.INDEXER_STARTED, projectRoot: env.TSA_PROJECT_ROOT });
-  await indexer.scanProject(env.TSA_PROJECT_ROOT);
-
-  const watcher = indexer.startWatcher(env.TSA_PROJECT_ROOT);
-
-  const shutdown = async (): Promise<void> => {
-    logger.info({ event: LogEvents.SERVER_SHUTDOWN });
-    await watcher.close();
-    logQueue.destroy();
-    process.exit(0);
+  // Shutdown gate: signal resolves this, main() awaits it, finally cleans up.
+  let resolveShutdown!: () => void;
+  const shutdownSignal = new Promise<void>(res => { resolveShutdown = res; });
+  const onSignal = (): void => {
+    logger.info({ event: LogEvents.SERVER_SHUTDOWN, reason: 'signal' });
+    resolveShutdown();
   };
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  try {
+    const parser = new ParserService();
+    const indexer = new IndexerService(dbService, parser);
+    const symbols = new SymbolService(dbService);
+    const references = new ReferenceService(dbService);
+    const framework = new FrameworkService(env.TSA_PROJECT_ROOT);
+    const config = new ConfigService(env.TSA_PROJECT_ROOT);
 
-  await startServer({ db: dbService, indexer, symbols, references, framework, config });
+    logger.info({ event: LogEvents.INDEXER_STARTED, projectRoot: env.TSA_PROJECT_ROOT });
+    await indexer.scanProject(env.TSA_PROJECT_ROOT);
+
+    watcher = indexer.startWatcher(env.TSA_PROJECT_ROOT);
+    mcpServer = await startServer({ db: dbService, indexer, symbols, references, framework, config });
+
+    await shutdownSignal;
+  } finally {
+    await mcpServer?.drain();
+    await mcpServer?.server.close();
+    await watcher?.close();
+    await logQueue.destroy();
+    db.close();
+    logger.info({ event: LogEvents.SERVER_SHUTDOWN, reason: 'cleanup done' });
+  }
 }
 
-main().catch(err => {
-  logger.error({ event: LogEvents.SERVER_SHUTDOWN, error: String(err) });
+process.on('uncaughtException', (err) => {
+  logger.error({ event: LogEvents.SERVER_SHUTDOWN, error: String(err), reason: 'uncaughtException' });
   process.exit(1);
 });
+
+process.on('unhandledRejection', (reason) => {
+  logger.error({ event: LogEvents.SERVER_SHUTDOWN, error: String(reason), reason: 'unhandledRejection' });
+  process.exit(1);
+});
+
+main()
+  .then(() => process.exit(0))
+  .catch(err => {
+    logger.error({ event: LogEvents.SERVER_SHUTDOWN, error: String(err) });
+    process.exit(1);
+  });

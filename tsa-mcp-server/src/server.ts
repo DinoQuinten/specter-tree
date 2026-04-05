@@ -2,7 +2,10 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
-  ListToolsRequestSchema
+  ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  ReadResourceRequestSchema
 } from '@modelcontextprotocol/sdk/types.js';
 import { ZodError } from 'zod';
 import { logger } from './logging/logger';
@@ -39,24 +42,110 @@ interface ServiceContainer {
   config: ConfigService;
 }
 
+/** Wraps a Server with an in-flight request counter for graceful drain. */
+export interface TsaServer {
+  server: Server;
+  /** Resolves when all in-flight requests complete. Timeout after ms (default 5000). */
+  drain(timeoutMs?: number): Promise<void>;
+}
+
 /**
  * @function createTsaServer
  * @description Build and wire up the MCP Server instance with all tool handlers.
  * Does not connect transport — call server.connect(transport) after.
  */
-export function createTsaServer(services: ServiceContainer): Server {
+export function createTsaServer(services: ServiceContainer): TsaServer {
+  let inFlight = 0;
+  let drainResolve: (() => void) | null = null;
+
+  const drain = (timeoutMs = 5000): Promise<void> => {
+    if (inFlight === 0) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        drainResolve = null;
+        resolve();
+      }, timeoutMs);
+      drainResolve = () => { clearTimeout(timer); resolve(); };
+    });
+  };
+
   const server = new Server(
     { name: 'tsa-mcp-server', version: '1.0.0' },
-    { capabilities: { tools: {} } }
+    { capabilities: { tools: {}, resources: {} } }
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: ALL_TOOLS
   }));
 
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: [
+      {
+        uri: 'tsa://files',
+        name: 'Indexed files',
+        description: 'All TypeScript files currently in the index',
+        mimeType: 'application/json'
+      },
+      {
+        uri: 'tsa://symbols',
+        name: 'Indexed symbol names',
+        description: 'All distinct symbol names in the index',
+        mimeType: 'application/json'
+      }
+    ]
+  }));
+
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+    resourceTemplates: [
+      {
+        uriTemplate: 'tsa://file/{path}',
+        name: 'Symbols in file',
+        description: 'All symbols declared in a specific indexed file',
+        mimeType: 'application/json'
+      },
+      {
+        uriTemplate: 'tsa://symbol/{name}',
+        name: 'Symbol record',
+        description: 'Full record for a named symbol',
+        mimeType: 'application/json'
+      }
+    ]
+  }));
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const uri = request.params.uri;
+
+    if (uri === 'tsa://files') {
+      const files = services.db.getAllFilePaths();
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(files) }] };
+    }
+
+    if (uri === 'tsa://symbols') {
+      const names = Array.from(services.db.getAllSymbolNames()).sort();
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(names) }] };
+    }
+
+    const fileMatch = uri.match(/^tsa:\/\/file\/(.+)$/);
+    if (fileMatch) {
+      const filePath = decodeURIComponent(fileMatch[1]!);
+      const symbols = services.db.getSymbolsByFile(filePath);
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(symbols) }] };
+    }
+
+    const symbolMatch = uri.match(/^tsa:\/\/symbol\/(.+)$/);
+    if (symbolMatch) {
+      const name = decodeURIComponent(symbolMatch[1]!);
+      const symbols = services.db.querySymbolsByName(name);
+      return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(symbols) }] };
+    }
+
+    throw new Error(`Unknown resource: ${uri}`);
+  });
+
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name: toolName, arguments: rawInput } = request.params;
     const start = Date.now();
+    inFlight++;
 
     try {
       let result: unknown;
@@ -97,20 +186,24 @@ export function createTsaServer(services: ServiceContainer): Server {
         }) }],
         isError: true
       };
+    } finally {
+      inFlight--;
+      if (inFlight === 0 && drainResolve) { drainResolve(); drainResolve = null; }
     }
   });
 
-  return server;
+  return { server, drain };
 }
 
 /**
  * @function startServer
  * @description Connect server to StdioServerTransport and begin serving.
  */
-export async function startServer(services: ServiceContainer): Promise<void> {
-  const server = createTsaServer(services);
-
+export async function startServer(services: ServiceContainer): Promise<TsaServer> {
+  const tsaServer = createTsaServer(services);
   const transport = new StdioServerTransport();
-  await server.connect(transport);
+  await tsaServer.server.connect(transport);
   logger.info({ event: LogEvents.SERVER_STARTED, tools: ALL_TOOLS.length });
+  return tsaServer;
+  return tsaServer;
 }

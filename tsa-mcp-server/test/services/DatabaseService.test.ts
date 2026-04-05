@@ -1,14 +1,11 @@
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { describe, it, expect, beforeAll, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { DatabaseService } from '../../src/services/DatabaseService';
 import type { TsaSymbol, NamedRef } from '../../src/types/common';
 
-function makeDb(): DatabaseService {
-  const db = new Database(':memory:');
-  const svc = new DatabaseService(db);
-  svc.initialize();
-  return svc;
-}
+const _db = new Database(':memory:');
+const sharedSvc = new DatabaseService(_db);
+sharedSvc.initialize();
 
 const BASE_SYMBOL: TsaSymbol = {
   name: 'TestClass',
@@ -26,10 +23,12 @@ const BASE_SYMBOL: TsaSymbol = {
 };
 
 describe('DatabaseService', () => {
-  let svc: DatabaseService;
+  const svc = sharedSvc;
 
   beforeEach(() => {
-    svc = makeDb();
+    svc.deleteFileSymbols('/proj/src/test.ts');
+    svc.deleteFileSymbols('/proj/src/caller.ts');
+    svc.deleteFileSymbols('/proj/src/a.ts');
   });
 
   it('initializes schema and returns version 1', () => {
@@ -92,15 +91,19 @@ describe('DatabaseService', () => {
 });
 
 describe('DatabaseService — reference methods', () => {
-  let svc: DatabaseService;
+  const svc = sharedSvc;
 
-  beforeEach(() => {
-    svc = makeDb();
+  beforeAll(() => {
     svc.insertSymbols([
       BASE_SYMBOL,
       { ...BASE_SYMBOL, name: 'callerFn', kind: 'function' as const, file_path: '/proj/src/caller.ts' },
       { ...BASE_SYMBOL, name: 'Animal', kind: 'interface' as const, file_path: '/proj/src/animal.ts' }
     ]);
+  });
+
+  beforeEach(() => {
+    svc.deleteFileReferences('/proj/src/caller.ts');
+    svc.deleteFileReferences('/proj/src/test.ts');
   });
 
   it('getAllSymbolNames returns all symbol names as a Set', () => {

@@ -167,7 +167,14 @@ export class IndexerService extends BaseService {
     const files: string[] = [];
     const SKIP = new Set(['node_modules', 'dist', '.tsa', '.git']);
     const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch (err) {
+        this.logError(LogEvents.INDEXER_FILE_CHANGED, err, { dir });
+        return;
+      }
+      for (const entry of entries) {
         if (entry.isDirectory()) {
           if (SKIP.has(entry.name)) continue;
           walk(join(dir, entry.name));
