@@ -266,6 +266,38 @@ export class DatabaseService extends BaseService {
   }
 
   /**
+   * @description Retrieves outgoing references for a source symbol, optionally filtered by kind.
+   * @param sourceSymbolId - Source symbol identifier.
+   * @param refKind - Optional edge kind filter.
+   * @returns Raw reference rows for outbound edges.
+   */
+  getOutgoingReferences(sourceSymbolId: number, refKind?: string): ReferenceRow[] {
+    try {
+      if (refKind) {
+        return this.db.query('SELECT * FROM "references" WHERE source_symbol_id = ? AND ref_kind = ?')
+          .all(sourceSymbolId, refKind) as ReferenceRow[];
+      }
+      return this.db.query('SELECT * FROM "references" WHERE source_symbol_id = ?')
+        .all(sourceSymbolId) as ReferenceRow[];
+    } catch (err) {
+      throw new QueryError('Failed to get outgoing references', { cause: String(err), sourceSymbolId, refKind });
+    }
+  }
+
+  /**
+   * @description Retrieves one symbol row by its primary key.
+   * @param id - Symbol identifier.
+   * @returns Matching symbol row, or null when absent.
+   */
+  getSymbolById(id: number): SymbolRow | null {
+    try {
+      return this.db.query('SELECT * FROM symbols WHERE id = ?').get(id) as SymbolRow | null;
+    } catch (err) {
+      throw new QueryError('Failed to get symbol by id', { cause: String(err), id });
+    }
+  }
+
+  /**
    * Get files this file imports from and files that import this file.
    * @param filePath The file to get relationships for
    */

@@ -2,19 +2,17 @@ import express from 'express';
 
 const app = express();
 
-app.use(express.json());
-
-app.use('/api', (req, res, next) => {
-  // auth middleware
+function authMiddleware(req: unknown, res: unknown, next: () => void): void {
   next();
-});
+}
 
-app.get('/api/users', (req, res) => {
-  res.json({ users: [] });
-});
+function getUsers(req: unknown, res: unknown): void {}
 
-app.post('/api/users', (req, res) => {
-  res.json({ created: true });
-});
+function createUser(req: unknown, res: unknown): void {}
+
+app.use(express.json());
+app.use('/api', authMiddleware);
+app.get('/api/users', getUsers);
+app.post('/api/users', createUser);
 
 export default app;

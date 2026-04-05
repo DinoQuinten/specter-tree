@@ -1,3 +1,9 @@
+/**
+ * @file server.ts
+ * @description MCP transport wiring for the TSA server, including tools, resources, and
+ * graceful in-flight request draining.
+ * @module services
+ */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -16,22 +22,26 @@ import type { SymbolService } from './services/SymbolService';
 import type { ReferenceService } from './services/ReferenceService';
 import type { FrameworkService } from './services/FrameworkService';
 import type { ConfigService } from './services/ConfigService';
+import type { InsightService } from './services/InsightService';
 import { SYMBOL_TOOL_DEFINITIONS, handleSymbolTool } from './tools/symbol-tools';
 import { REFERENCE_TOOL_DEFINITIONS, handleReferenceTool } from './tools/reference-tools';
 import { INDEX_TOOL_DEFINITIONS, handleIndexTool } from './tools/index-tools';
 import { RUNTIME_TOOL_DEFINITIONS, handleRuntimeTool } from './tools/runtime-tools';
+import { INSIGHT_TOOL_DEFINITIONS, handleInsightTool } from './tools/insight-tools';
 
 const ALL_TOOLS = [
   ...SYMBOL_TOOL_DEFINITIONS,
   ...REFERENCE_TOOL_DEFINITIONS,
   ...INDEX_TOOL_DEFINITIONS,
-  ...RUNTIME_TOOL_DEFINITIONS
+  ...RUNTIME_TOOL_DEFINITIONS,
+  ...INSIGHT_TOOL_DEFINITIONS
 ];
 
 const SYMBOL_TOOL_NAMES = new Set(SYMBOL_TOOL_DEFINITIONS.map(t => t.name));
 const REFERENCE_TOOL_NAMES = new Set(REFERENCE_TOOL_DEFINITIONS.map(t => t.name));
 const INDEX_TOOL_NAMES = new Set(INDEX_TOOL_DEFINITIONS.map(t => t.name));
 const RUNTIME_TOOL_NAMES = new Set(RUNTIME_TOOL_DEFINITIONS.map(t => t.name));
+const INSIGHT_TOOL_NAMES = new Set(INSIGHT_TOOL_DEFINITIONS.map(t => t.name));
 
 interface ServiceContainer {
   db: DatabaseService;
@@ -40,6 +50,7 @@ interface ServiceContainer {
   references: ReferenceService;
   framework: FrameworkService;
   config: ConfigService;
+  insight: InsightService;
 }
 
 /** Wraps a Server with an in-flight request counter for graceful drain. */
@@ -158,6 +169,8 @@ export function createTsaServer(services: ServiceContainer): TsaServer {
         result = await handleIndexTool(toolName, rawInput, services.indexer);
       } else if (RUNTIME_TOOL_NAMES.has(toolName)) {
         result = handleRuntimeTool(toolName, rawInput, services.framework, services.config);
+      } else if (INSIGHT_TOOL_NAMES.has(toolName)) {
+        result = handleInsightTool(toolName, rawInput, services.insight);
       } else {
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ error: `Unknown tool: ${toolName}` }) }],
@@ -204,6 +217,5 @@ export async function startServer(services: ServiceContainer): Promise<TsaServer
   const transport = new StdioServerTransport();
   await tsaServer.server.connect(transport);
   logger.info({ event: LogEvents.SERVER_STARTED, tools: ALL_TOOLS.length });
-  return tsaServer;
   return tsaServer;
 }

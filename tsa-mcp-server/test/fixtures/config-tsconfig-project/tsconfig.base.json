@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "baseUrl": "./src",
+    "paths": {
+      "@app/*": ["app/*"]
+    }
+  }
+}

@@ -6,7 +6,7 @@
 
 *One query. Exact file. Exact line.*
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![Runtime: Bun](https://img.shields.io/badge/Runtime-Bun-f472b6.svg)](https://bun.sh)
 [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP-8b5cf6.svg)](https://modelcontextprotocol.io)
 [![TypeScript](https://img.shields.io/badge/TypeScript-100%25-3178c6.svg)]()
@@ -132,6 +132,13 @@ flowchart TB
         R3["trace_middleware"]
     end
 
+    subgraph Insight["Layer 4: Insight (~100-300 tok/call)"]
+        I1["summarize_file_structure"]
+        I2["resolve_exports"]
+        I3["find_write_targets"]
+        I4["explain_flow"]
+    end
+
     subgraph Agent["AI Coding Agent"]
         CC["Claude Code / Cursor / Codex"]
     end
@@ -141,13 +148,16 @@ flowchart TB
     PM -->|symbols + refs| DB
     DB --> Tools
     DB --> Runtime
+    DB --> Insight
     Tools <-->|MCP stdio| Agent
     Runtime <-->|MCP stdio| Agent
+    Insight <-->|MCP stdio| Agent
 
     style Project fill:#1a1a2e,stroke:#534AB7,color:#fff
     style Indexer fill:#0d1117,stroke:#1D9E75,color:#fff
     style Tools fill:#0d1117,stroke:#378ADD,color:#fff
     style Runtime fill:#0d1117,stroke:#D85A30,color:#fff
+    style Insight fill:#0d1117,stroke:#a855f7,color:#fff
     style Agent fill:#0d1117,stroke:#534AB7,color:#fff
 ```
 
@@ -262,12 +272,32 @@ We predicted specter-tree navigation would cost more than Grep. **It costs less.
 | `resolve_config` | `config_key` | Resolved value + source chain |
 | `trace_middleware` | `route_path, method?` | Middleware execution order |
 
+### Insight (token-saving summaries)
+
+| Tool | Input | Returns |
+|---|---|---|
+| `summarize_file_structure` | `file_path` | Compact anatomy: exports, classes + members, functions, interfaces, import graph |
+| `resolve_exports` | `file_path, export_name` | Declaration file + line after following barrel re-exports |
+| `find_write_targets` | `symbol_name, class?` | Ranked edit locations — declaration (100), callers (80), implementors (75), subclasses (70) |
+| `explain_flow` | `symbol_name / file_path / route_path, max_depth?` | Bounded call-graph paths including middleware hops for routes |
+
 ### Index control
 
 | Tool | Input | Returns |
 |---|---|---|
 | `flush_file` | `file_path` | Force immediate re-index (bypasses debounce) |
 | `index_project` | `root_path` | Full project re-scan |
+
+### MCP Resources
+
+Browse the live index without sending a tool call:
+
+| URI | Returns |
+|---|---|
+| `tsa://files` | All indexed TypeScript file paths |
+| `tsa://symbols` | All distinct symbol names |
+| `tsa://file/{path}` | Every symbol declared in a specific file |
+| `tsa://symbol/{name}` | Full record for a named symbol |
 
 ---
 
@@ -448,15 +478,18 @@ docs: add contributing guide for framework resolvers
 - [x] Layer 1: Offline indexer with incremental updates
 - [x] Layer 2: Symbol and reference query tools
 - [x] Layer 3: Framework detection + config resolution
+- [x] Layer 4: Insight tools — summarize, resolve exports, write targets, flow
+- [x] MCP Resources for index browsing without tool calls
+- [x] Graceful shutdown with in-flight request drain
 - [x] Benchmark against Claude Code native tools
 - [ ] npm package for `npx` installation
 - [ ] Language parser plugin system
 - [ ] Python parser (tree-sitter)
+- [ ] Selective node_modules indexing for external SDK types
 - [ ] Batch query tool (multiple queries in one MCP call)
-- [ ] Response depth levels (minimal vs full)
 
 ---
 
 ## License
 
-MIT
+AGPL-3.0-only
