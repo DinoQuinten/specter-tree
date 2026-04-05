@@ -14,7 +14,7 @@ import { ConfigService } from '../src/services/ConfigService';
 const FIXTURE = join(import.meta.dir, 'fixtures/simple-ts-project');
 
 describe('MCP server contract', () => {
-  let server: ReturnType<typeof createTsaServer>;
+  let server: ReturnType<typeof createTsaServer>['server'];
 
   beforeAll(async () => {
     const raw = new Database(':memory:');
@@ -31,7 +31,7 @@ describe('MCP server contract', () => {
       references: new ReferenceService(db),
       framework: new FrameworkService(FIXTURE),
       config: new ConfigService(FIXTURE)
-    });
+    }).server;
   });
 
   it('lists all registered tools', async () => {
