@@ -10,6 +10,7 @@ import { SymbolService } from '../src/services/SymbolService';
 import { ReferenceService } from '../src/services/ReferenceService';
 import { FrameworkService } from '../src/services/FrameworkService';
 import { ConfigService } from '../src/services/ConfigService';
+import { InsightService } from '../src/services/InsightService';
 
 const FIXTURE = join(import.meta.dir, 'fixtures/simple-ts-project');
 
@@ -30,7 +31,8 @@ describe('MCP server contract', () => {
       symbols: new SymbolService(db),
       references: new ReferenceService(db),
       framework: new FrameworkService(FIXTURE),
-      config: new ConfigService(FIXTURE)
+      config: new ConfigService(FIXTURE),
+      insight: new InsightService(FIXTURE, db, new FrameworkService(FIXTURE))
     }).server;
   });
 
@@ -43,8 +45,12 @@ describe('MCP server contract', () => {
       params: {}
     }), {});
 
-    expect(result.tools.length).toBeGreaterThanOrEqual(11);
+    expect(result.tools.length).toBeGreaterThanOrEqual(14);
     expect(result.tools.some((tool: { name: string }) => tool.name === 'trace_middleware')).toBe(true);
+    expect(result.tools.some((tool: { name: string }) => tool.name === 'summarize_file_structure')).toBe(true);
+    expect(result.tools.some((tool: { name: string }) => tool.name === 'resolve_exports')).toBe(true);
+    expect(result.tools.some((tool: { name: string }) => tool.name === 'find_write_targets')).toBe(true);
+    expect(result.tools.some((tool: { name: string }) => tool.name === 'explain_flow')).toBe(true);
   });
 
   it('returns a structured validation error for invalid tool input', async () => {
@@ -71,5 +77,21 @@ describe('MCP server contract', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).toContain('Unknown tool: missing_tool');
+  });
+
+  it('dispatches summarize_file_structure through the MCP server', async () => {
+    const handler = (server as unknown as { _requestHandlers: Map<string, Function> })._requestHandlers.get('tools/call')!;
+    const result = await handler(CallToolRequestSchema.parse({
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'tools/call',
+      params: {
+        name: 'summarize_file_structure',
+        arguments: { file_path: join(FIXTURE, 'src/auth/authService.ts') }
+      }
+    }), {});
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]!.text).toContain('AuthService');
   });
 });
