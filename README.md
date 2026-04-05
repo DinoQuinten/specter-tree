@@ -2,9 +2,9 @@
 
 # Specter-Tree
 
-**Give your AI a map of your TypeScript codebase.**
+**Your AI assistant stops guessing where code lives.**
 
-*Instead of reading 10 files to find one function — ask once, get the exact line.*
+*It asks once. Gets the exact file and line. Reads only what it needs.*
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![Runtime: Bun](https://img.shields.io/badge/Runtime-Bun-f472b6.svg)](https://bun.sh)
@@ -16,35 +16,46 @@
 
 ---
 
-## What Is This?
+## The Simplest Way to Understand It
 
-Specter-tree is a TypeScript-aware MCP server. It builds a live structural index of your codebase so coding agents — Claude Code, Codex CLI, Cursor, or any MCP stdio client — can ask for exact symbols, call sites, routes, and config values instead of searching blindly through files.
+Your AI assistant wants to add a login check to `handleRequest`.
 
-- *Where is `handleLogin` defined?* → Exact file and line number, instantly.
-- *What calls `validateUser`?* → Every call site across your whole project.
-- *What does this class extend?* → The full inheritance chain.
+**Without Specter-Tree:**
+```
+1. Glob all .ts files          → 31 paths, scan the list
+2. Grep for "handleRequest"    → 6 matches across 4 files
+3. Read server.ts (full file)  → 126 lines, needed 20
+─────────────────────────────────────────────────
+~1350 tokens spent.  Lines actually needed: 20.
+```
 
-Without Specter-tree, an agent scans grep output, reads whole files, and often opens the wrong place first. With Specter-tree, it asks one structural question and gets one precise answer.
+**With Specter-Tree:**
+```
+1. find_symbol("handleRequest") → server.ts, line 111, exact
+2. Read server.ts lines 111–130 → 20 lines, nothing else
+─────────────────────────────────────────────────
+~500 tokens spent.  Lines actually needed: 20.
+```
+
+Same edit. Same result. **63% fewer tokens.**
+
+---
+
+## Who Is This For?
+
+- **AI agent users** — Claude Code, Codex CLI, Cursor. Your agent navigates code faster and makes fewer wrong reads.
+- **Tool builders** — Integrating an LLM into a dev workflow? Specter-Tree gives it structural awareness without feeding it whole files.
+- **Large codebase owners** — The bigger the project, the bigger the gap between grep and a structural query.
+
+You do not need to understand ASTs or SQLite to use this. You paste one prompt, and your agent handles the rest.
 
 ---
 
 ## What Is MCP?
 
-MCP (Model Context Protocol) is the standard way coding agents connect to external tools. Specter-tree is one such MCP server. Once connected, the agent can call its structural code-navigation tools during a conversation instead of relying on text search.
+MCP (Model Context Protocol) is the standard way AI coding agents connect to external tools. Think of it like a plugin system — your agent launches Specter-Tree as a background process and calls its tools during a conversation.
 
-The key idea is simple: your coding agent launches the Specter-tree stdio server for the session, then binds it to the current workspace root using the `set_project_root` tool — no manual path configuration needed.
-
----
-
-## The Promise
-
-Normal workflow once set up:
-
-1. Clone this repo and run `bun run dev`.
-2. Specter-tree prints the MCP config JSON and a ready-to-paste prompt.
-3. Open your AI agent (Claude Code, Codex, Cursor, etc.) in the project you want to work on.
-4. Paste the printed output into the agent.
-5. The agent configures the MCP connection, binds `tsa` to the current workspace, and starts navigating with `tsa` before grep or glob.
+Specter-Tree is one such tool. Instead of reading raw files, your agent calls `find_symbol("AuthService")` and gets back the exact file and line number — no scanning required.
 
 ---
 
@@ -58,11 +69,11 @@ Install [Bun](https://bun.sh) if you do not have it:
 curl -fsSL https://bun.sh/install | bash
 ```
 
-Specter-tree works on macOS, Linux, and Windows (WSL or Git Bash).
+Specter-Tree works on macOS, Linux, and Windows (WSL or Git Bash).
 
 ---
 
-### Step 1 — Install Specter-Tree
+### Step 1 — Install
 
 ```bash
 git clone https://github.com/DinoQuinten/specter-tree.git
@@ -72,23 +83,19 @@ bun install
 
 ---
 
-### Step 2 — Run the Server Once
-
-From `specter-tree/tsa-mcp-server`:
+### Step 2 — Run it once
 
 ```bash
 bun run dev
 ```
 
-The startup banner prints:
+The terminal prints:
 
 - The MCP config JSON your agent needs to connect.
-- The prompt text that tells the agent how to connect and use `tsa`.
-- The currently detected project root for visibility and debugging.
+- A ready-to-paste prompt that wires everything up automatically.
+- The project root it detected on your machine.
 
-Copy everything in the printed setup block — you will paste it into your agent in the next step.
-
-To copy the prompt directly to your clipboard:
+To copy the prompt straight to your clipboard:
 
 ```bash
 # macOS
@@ -103,117 +110,116 @@ bun run dev --prompt | xclip -selection clipboard
 
 ---
 
-### Step 3 — Paste the Output Into Your Agent
+### Step 3 — Paste into your agent
 
-Open your AI agent in the project you want to work on, then paste the printed setup block from `bun run dev`.
+Open your AI agent in the project you want to work on. Paste the printed output.
 
-The agent should then:
+The agent will:
 
-1. Add or update the MCP configuration for `tsa`.
-2. Confirm the server is available and list its tools.
-3. Call `set_project_root` with the current workspace root.
-4. Begin using `tsa` for all code navigation.
+1. Add the MCP config and connect to Specter-Tree.
+2. Call `set_project_root` with your workspace path.
+3. Start using `tsa` tools for all code navigation.
 
-That is the complete onboarding flow. You should not need to hardcode `TSA_PROJECT_ROOT` or manually edit `.mcp.json` in normal use.
+That is the full setup. No env vars to set. No config files to edit by hand.
 
 ---
 
-### What the Agent Receives
+## What the Agent Gets
 
-The printed output contains an MCP config block in this shape:
+The printed config looks like this — with your actual machine path embedded, not a placeholder:
 
 ```json
 {
   "mcpServers": {
     "tsa": {
       "command": "bun",
-      "args": ["run", "/absolute/path/to/specter-tree/tsa-mcp-server/src/index.ts"]
+      "args": ["run", "/your/path/to/specter-tree/tsa-mcp-server/src/index.ts"]
     }
   }
 }
 ```
 
-The path shown is the **actual path on your machine** — not a placeholder. The agent is expected to use this config to wire up the MCP connection automatically.
+After connecting, the agent calls `set_project_root` once to bind Specter-Tree to the current workspace. From that point on it has 18 structural tools available.
 
-For advanced or manual setups, you can also override the project root:
+---
 
-```bash
-bun run dev --project /path/to/project
-TSA_PROJECT_ROOT=/path/to/project bun run dev
+## What the Agent Does After Setup
+
+```
+1. Connect to tsa using the printed MCP config.
+2. Confirm the server is available and list its tools.
+3. Call set_project_root with the active workspace root.
+4. Use tsa to find the exact symbol, file, or route.
+5. Read only the lines it needs.
+6. Call flush_file after any edit to keep the index current.
 ```
 
 ---
 
-## What Happens After You Paste the Prompt
+## The 18 Tools
 
-The agent should work through this sequence automatically:
+### Find Symbols
 
-1. Use the printed MCP config to connect `tsa`.
-2. Confirm that the `tsa` MCP server is available.
-3. Inspect the available `tsa` tools and resources.
-4. Call `set_project_root` with the active workspace root.
-5. Find the exact symbol, file, or route using `tsa`.
-6. Read only the smallest code region needed.
-7. Call `flush_file` after any edit so the index stays fresh.
+| Tool | What It Does |
+|---|---|
+| `find_symbol(name)` | Exact file and line for any function, class, or interface. |
+| `search_symbols(query)` | Partial or fuzzy name search across the whole project. |
+| `get_file_symbols(file_path)` | Every symbol declared in a file. |
+| `get_methods(class_name)` | All methods and properties on a class. |
 
----
+### Understand Relationships
 
-## The Problem It Solves
+| Tool | What It Does |
+|---|---|
+| `get_callers(symbol_name)` | Every place in the project that calls this function. |
+| `get_hierarchy(class_name)` | What this class extends and what extends it. |
+| `get_implementations(interface_name)` | All classes that implement this interface. |
+| `get_related_files(file_path)` | What this file imports and what imports it. |
 
-Without Specter-tree, every navigation task burns tokens:
+### Framework and Config
 
-```
-Task: find startServer and add a startup greeting
+| Tool | What It Does |
+|---|---|
+| `trace_middleware(route_path)` | What middleware runs before this route handler. |
+| `get_route_config(url_path)` | Route handler, guards, and redirects for a URL. |
+| `resolve_config(key)` | What this config value is and where it comes from. |
 
-  Step 1  Glob all .ts files              ->  31 paths listed
-  Step 2  Grep for "startServer"          ->  6 matching lines, scan output
-  Step 3  Read server.ts (full file)      ->  126 lines — needed 20
-  ──────────────────────────────────────────────────────────────
-  Total:  ~1350 tokens        Lines actually needed: 20 of 126
-```
+### High-Level Insight — Saves the Most Tokens
 
-With Specter-tree:
+| Tool | What It Does |
+|---|---|
+| `summarize_file_structure(file_path)` | Compact anatomy: exports, classes, functions, imports. One call replaces reading the whole file. |
+| `explain_flow(symbol_name?, file_path?, route_path?, max_depth?)` | Trace the call graph from any entry point. Exactly one of the first three parameters is required. |
+| `find_write_targets(symbol_name)` | Ranked list of where to actually make an edit — declaration first, then callers, then implementors. |
+| `resolve_exports(file_path, export_name)` | Follow barrel re-exports to the actual declaration file and line. |
 
-```
-Task: find startServer and add a startup greeting
+### Index Control
 
-  Step 1  find_symbol("startServer")      ->  server.ts line 111, exact
-  Step 2  Read server.ts lines 111-130    ->  20 lines, nothing else
-  ──────────────────────────────────────────────────────────────
-  Total:  ~500 tokens         Lines actually needed: 20 of 20
-```
+| Tool | What It Does |
+|---|---|
+| `set_project_root(project_root)` | Bind tsa to a workspace root, scan it, and replace all services. The agent calls this at session start. |
+| `flush_file(file_path)` | Force an immediate re-index after an edit, bypassing the 300ms debounce. |
+| `index_project(root)` | Full re-scan of the active root. |
 
-Same task. Same edit. **63% fewer tokens.**
+### Browse Without Tool Calls (MCP Resources)
 
-Savings grow with task complexity:
-
-```
-SIMPLE  find one function, edit it
-██████████████████████████████████████████████████  1350 tok  Grep
-██████████████████                                   500 tok  Specter-tree    63% saved
-
-MEDIUM  trace callers across 3 files
-█████████████████████████████████████████████████████████████████████  2850 tok  Grep
-████████████████████                                                   900 tok  Specter-tree    68% saved
-
-LARGE   map full inheritance, 15+ files
-████████████████████████████████████████████████████████████████████████████████  4800 tok  Grep
-████████████████                                                                 1000 tok  Specter-tree    79% saved
-```
-
-> Savings compound with depth. The larger the navigation task, the bigger the gap.
+| URI | Returns |
+|---|---|
+| `tsa://files` | All indexed TypeScript file paths. |
+| `tsa://symbols` | All distinct symbol names. |
+| `tsa://file/{path}` | Every symbol declared in a specific file. |
+| `tsa://symbol/{name}` | Full record for a named symbol. |
 
 ---
 
 ## How It Works
 
-There are two moving parts:
+Two processes. One connection.
 
-1. **The Specter-tree server** — runs on your machine, watches the currently bound TypeScript project, and keeps a SQLite index of every symbol and reference. It uses zero tokens.
+1. **Specter-Tree** — runs on your machine, watches your TypeScript files, and keeps a SQLite index of every symbol and reference. Uses zero tokens.
+2. **Your AI agent** — Claude Code, Codex, Cursor, or any MCP stdio client. Once connected, it queries the index instead of reading files.
 
-2. **Your AI agent** — Claude Code, Codex, Cursor, or any MCP-compatible client. Once connected, it calls Specter-tree tools during the conversation instead of reading raw files first.
-
-The key point: **the server and your AI agent are separate processes.** The MCP client launches a dedicated server process per session — one pipe, one process, one index. Two agents on two projects never share state. The agent binds its process to the current workspace root using `set_project_root`.
+The MCP client launches a dedicated Specter-Tree process per session. Each session has its own process and its own index — sessions never share state.
 
 ```mermaid
 flowchart TB
@@ -222,7 +228,7 @@ flowchart TB
             FS["*.ts / *.tsx files"]
         end
 
-        subgraph Server["Specter-tree Server (background)"]
+        subgraph Server["Specter-Tree Server (background)"]
             CK["chokidar watcher\n300ms debounce"]
             PM["ts-morph AST parser"]
             DB[("SQLite index\n.tsa/index.db")]
@@ -248,71 +254,104 @@ flowchart TB
 
 | Event | Latency | Mechanism |
 |---|---|---|
-| File saved | ~300ms | chokidar debounce, then `reindexFile` |
+| File saved | ~300ms | chokidar debounce, then re-index |
 | File deleted | Immediate | Database entry removed |
 | AI edits a file | Instant | `flush_file` bypasses the debounce |
 | Cold start | One-time scan | Two-pass; hash-skips unchanged files |
-| Project switch | On demand | `set_project_root` tears down old state and scans the new root. In-flight queries finish before the swap. |
+| Project switch | On demand | `set_project_root` tears down old state and scans the new root |
 
 The index for each project lives at `{project_root}/.tsa/index.db` — created automatically, wiped on every bind. Add `.tsa/` to your `.gitignore`; it is generated output and should not be committed.
 
 ---
 
-## Available Tools
+## Frequently Asked Questions
 
-Once connected, your AI has 18 structural tools instead of blind file reading.
+**Can two projects share one server?**
 
-### Find Symbols
+No. The MCP stdio transport is a one-to-one pipe — one agent session, one server process, one index. If you have Claude Code on project A and Cursor on project B, each spawns its own process. They never share state.
 
-| Tool | What It Does |
+**How do I switch projects mid-session?**
+
+Call `set_project_root("/path/to/other-project")`. The server wipes the old index, scans the new root, and replaces all services atomically. Your agent does not need to reconnect.
+
+**Where does the index live?**
+
+At `{project_root}/.tsa/index.db`. Created automatically, wiped on every bind. Add `.tsa/` to `.gitignore`.
+
+**Which agents work with this?**
+
+Tested with Claude Code, Codex CLI, and Cursor. Any client that supports MCP stdio transport and can run `bun` will work.
+
+**The index seems stale — what do I do?**
+
+Call `flush_file(file_path)` after any edit. For a full re-scan, call `index_project(root)`.
+
+**Does it index `node_modules`?**
+
+No. Only your project files. For external package symbols, fall back to grep.
+
+---
+
+## Token Savings — Real Data
+
+Run against this repository (31 TypeScript source files). Task: *add a startup greeting to the MCP server.* Run twice in opposite orders to eliminate first-run bias.
+
+```
+                    Test 1              Test 2
+                    (Specter first)     (grep first)
+
+Specter-Tree        ~500 tok            ~800 tok
+Grep + Read         ~1350 tok           ~1750 tok
+
+Reduction           63%                 54%
+```
+
+| Stage | Without Specter-Tree | With Specter-Tree | Saving |
+|---|---|---|---|
+| Navigation | 400–450 tok | ~350 tok | ~15% |
+| Wrong file reads | 0–300 tok | 0 tok | 100% |
+| Correct file reads | ~850 tok (full file) | ~150 tok (20 lines) | ~82% |
+| **Total** | **1350–1750 tok** | **500–800 tok** | **54–67%** |
+
+The biggest saving came from partial reads — not avoided wrong reads as we initially predicted. The line number from `find_symbol` means the agent reads 20 lines instead of a 126-line file. That single mechanism accounts for more than half the total saving.
+
+Savings compound with task depth:
+
+```
+SIMPLE  find one function, edit it
+██████████████████████████████████████████████████  1350 tok  Grep
+██████████████████                                   500 tok  Specter-Tree    63% saved
+
+MEDIUM  trace callers across 3 files
+█████████████████████████████████████████████████████████████████████  2850 tok  Grep
+████████████████████                                                   900 tok  Specter-Tree    68% saved
+
+LARGE   map full inheritance, 15+ files
+████████████████████████████████████████████████████████████████████████████████  4800 tok  Grep
+████████████████                                                                 1000 tok  Specter-Tree    79% saved
+```
+
+---
+
+## Limitations
+
+Specter-Tree indexes **your project files only**. External packages in `node_modules` return no results — fall back to grep for those.
+
+The call graph is **best-effort, not exhaustive**. Known gaps:
+
+- Dependency injection (`@Inject` providers).
+- Event emitters (string-based event names).
+- Dynamic dispatch (`obj[methodName]()`).
+- Higher-order functions and callbacks.
+- Calls routed through a passed-in parameter (e.g. `runtime.method()` where `runtime` is an argument).
+
+All call graph results include a `confidence` field:
+
+| Value | Meaning |
 |---|---|
-| `find_symbol(name)` | Locate any function, class, or interface by exact name. Returns file and line. |
-| `search_symbols(query)` | Fuzzy or partial name search across the whole project. |
-| `get_file_symbols(file_path)` | List every symbol declared in a file. |
-| `get_methods(class_name)` | All methods and properties on a class. |
-
-### Understand Relationships
-
-| Tool | What It Does |
-|---|---|
-| `get_callers(symbol_name)` | Every place in the project that calls this function. |
-| `get_hierarchy(class_name)` | What does this class extend? What does it implement? |
-| `get_implementations(interface_name)` | All classes that implement this interface. |
-| `get_related_files(file_path)` | What does this file import? What imports it? |
-
-### Framework and Config
-
-| Tool | What It Does |
-|---|---|
-| `trace_middleware(route_path)` | What middleware runs before this route handler? |
-| `get_route_config(url_path)` | Route handler, guards, and redirects for a URL. |
-| `resolve_config(key)` | What is this config value and where does it come from? |
-
-### High-Level Insight (Saves the Most Tokens)
-
-| Tool | What It Does |
-|---|---|
-| `summarize_file_structure(file_path)` | Compact anatomy of a file — exports, classes, functions, and imports. |
-| `explain_flow(symbol_name?, file_path?, route_path?, max_depth?)` | Trace the call graph from any entrypoint. Exactly one of the first three parameters is required. |
-| `find_write_targets(symbol_name)` | Ranked list of where to actually make an edit. |
-| `resolve_exports(file_path, export_name)` | Follow barrel re-exports to the actual declaration file and line. |
-
-### Index Control
-
-| Tool | What It Does |
-|---|---|
-| `set_project_root(project_root)` | Bind `tsa` to a workspace root, scan it, and replace all services. Used by the agent at session start. |
-| `flush_file(file_path)` | Force immediate re-index after an edit, bypassing the 300ms debounce. |
-| `index_project(root)` | Full re-scan of the active root. |
-
-### Browse Without Tool Calls (MCP Resources)
-
-| URI | Returns |
-|---|---|
-| `tsa://files` | All indexed TypeScript file paths. |
-| `tsa://symbols` | All distinct symbol names. |
-| `tsa://file/{path}` | Every symbol declared in a specific file. |
-| `tsa://symbol/{name}` | Full record for a named symbol. |
+| `direct` | A static call expression — the compiler can see it. High confidence. |
+| `inferred` | Resolved through a known pattern (e.g. interface implementation). Likely but not certain. |
+| `weak` | Structural guess — same name, compatible signature. Verify before acting on it. |
 
 ---
 
@@ -325,89 +364,14 @@ Once connected, your AI has 18 structural tools instead of blind file reading.
 | `LOG_LEVEL` | No | `info` | `debug` / `info` / `warn` / `error` |
 | `NODE_ENV` | No | `development` | `development` / `production` |
 
-In normal usage, the agent calls `set_project_root` after connecting. You do not need to set `TSA_PROJECT_ROOT` manually.
+In normal use the agent calls `set_project_root` after connecting. You do not need to set `TSA_PROJECT_ROOT` manually.
 
-**If no override is provided, the initial root is detected in this order:**
+**If no override is set, the initial root is detected in this order:**
 
 1. `--project <path>` CLI flag.
 2. `TSA_PROJECT_ROOT` environment variable.
 3. Nearest `tsconfig.json` found by walking up from the current directory.
 4. Current directory as a last resort.
-
----
-
-## Benchmark — Real Data, This Codebase
-
-Run against this repository (31 TypeScript source files). Same task both rounds: *add a startup greeting to the MCP server.* Run twice in opposite orders to eliminate first-run bias.
-
-```
-                    Test 1              Test 2
-                    (specter first)     (grep first)
-
-Specter-tree        ~500 tok            ~800 tok
-Grep + Read         ~1350 tok           ~1750 tok
-
-Reduction           63%                 54%
-```
-
-| Stage | Without Specter-tree | With Specter-tree | Saving |
-|---|---|---|---|
-| Navigation | 400–450 tok | ~350 tok | ~15% |
-| Wrong file reads | 0–300 tok | 0 tok | 100% |
-| Correct file reads | ~850 tok (full file) | ~150 tok (20 lines) | ~82% |
-| **Total** | **1350–1750 tok** | **500–800 tok** | **54–67%** |
-
-**What the data corrected:** We predicted wrong reads would dominate savings. They did not. The biggest saving came from partial reads. The line number from `find_symbol` means the AI reads 20 lines instead of a 126-line file. That single mechanism accounts for more than half the total saving.
-
----
-
-## Frequently Asked Questions
-
-**Can two projects share one server?**
-
-No. The MCP stdio transport is a one-to-one pipe — one agent session, one server process, one index. If you have Claude Code open on project A and Cursor open on project B, each spawns its own process. They never share state.
-
-**How do I switch projects mid-session?**
-
-Call `set_project_root("/path/to/other-project")`. The server wipes the old index, scans the new root, and replaces all services atomically. In-flight queries finish before the swap. Your agent does not need to reconnect.
-
-**Where does the index live?**
-
-At `{project_root}/.tsa/index.db`. Created automatically on first scan, wiped clean on every `set_project_root` call. Add `.tsa/` to your `.gitignore` — it is generated output and should not be committed.
-
-**Which agents does this work with?**
-
-Tested with Claude Code, Codex CLI, and Cursor. Any client that supports MCP stdio transport and can run `bun` will work.
-
-**The index seems stale — what do I do?**
-
-Call `flush_file(file_path)` after any edit to force an immediate re-index of that file, bypassing the 300ms debounce. For a full re-scan of the whole project, call `index_project(root)`.
-
-**Does it index `node_modules`?**
-
-No. Only your project files are indexed. For external package symbols, fall back to grep.
-
----
-
-## Limitations
-
-Specter-tree indexes **your project files only**. External packages in `node_modules` return no results — for those, fall back to grep. Both benchmark runs hit this when looking up methods from the MCP SDK.
-
-The call graph is **best-effort, not exhaustive**. Known gaps:
-
-- Dependency injection (`@Inject` providers).
-- Event emitters (string-based event names).
-- Dynamic dispatch (`obj[methodName]()`).
-- Higher-order functions and callbacks.
-- Calls routed through a passed-in parameter (e.g. `runtime.setProjectRoot(...)` where `runtime` is an argument).
-
-All call graph results include a `confidence` field:
-
-| Value | Meaning |
-|---|---|
-| `direct` | A static call expression — the compiler can see it. High confidence. |
-| `inferred` | Resolved through a known pattern (e.g. interface implementation). Treat as likely but not certain. |
-| `weak` | Structural guess — same name, compatible signature. Verify before acting on it. |
 
 ---
 
@@ -444,7 +408,7 @@ erDiagram
     FILES ||--o{ SYMBOLS : "file_path"
 ```
 
-Specter-tree uses SQLite B+trees for all symbol and reference storage. Lookups are O(log n), typically 3–4 page reads for 5,000 symbols — sub-millisecond. The call graph uses an adjacency list rather than closure tables, so writes are O(1) per edge. Multi-hop traversals use recursive CTEs.
+SQLite B+trees for all storage. Lookups are O(log n) — typically 3–4 page reads for 5,000 symbols, sub-millisecond. The call graph uses an adjacency list so writes are O(1) per edge. Multi-hop traversals use recursive CTEs.
 
 ---
 
@@ -475,29 +439,30 @@ git clone https://github.com/DinoQuinten/specter-tree.git
 cd specter-tree/tsa-mcp-server
 bun install
 bun test              # 97 tests
-bun run typecheck     # type check, must exit clean
+bun run typecheck     # must exit clean
 bun run dev           # start the server
 ```
 
-Git hooks enforce quality on every commit and push:
+Git hooks run on every commit and push:
 
-- **pre-commit:** Scans staged files for secrets (gitleaks) and checks for duplicate symbols.
+- **pre-commit:** Scans staged files for secrets and checks for duplicate symbols.
 - **pre-push:** Runs the full test suite and type check.
 
 ---
 
 ## Roadmap
 
-- [x] Layer 1: Offline indexer with incremental updates.
-- [x] Layer 2: Symbol and reference query tools.
-- [x] Layer 3: Framework detection and config resolution.
-- [x] Layer 4: Insight tools — summarize, resolve exports, write targets, flow.
+- [x] Offline indexer with incremental updates.
+- [x] Symbol and reference query tools.
+- [x] Framework detection and config resolution.
+- [x] Insight tools — summarize, resolve exports, write targets, flow.
 - [x] MCP Resources for index browsing without tool calls.
 - [x] Graceful shutdown with in-flight request drain.
 - [x] Coloured startup banner with ready-to-paste agent prompt.
 - [x] `--prompt` flag generates exact connection config with real paths.
 - [x] `set_project_root` tool — agent binds the workspace without env var setup.
 - [x] Benchmark against Claude Code native tools.
+- [x] tsconfig `paths` alias resolution for non-relative imports.
 - [ ] npm package for `npx` installation.
 - [ ] Language parser plugin system.
 - [ ] Python parser (tree-sitter).
