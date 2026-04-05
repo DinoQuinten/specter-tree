@@ -13,6 +13,7 @@ import { SCHEMA_DDL } from '../database/schema';
  */
 export class DatabaseService extends BaseService {
   private readonly db: Database;
+  private initialized = false;
 
   /**
    * @param db A bun:sqlite Database instance
@@ -27,8 +28,10 @@ export class DatabaseService extends BaseService {
    * @throws QueryError if schema initialization fails
    */
   initialize(): void {
+    if (this.initialized) return;
     try {
       this.db.exec(SCHEMA_DDL);
+      this.initialized = true;
       this.logInfo(LogEvents.DB_INITIALIZED);
     } catch (err) {
       throw new QueryError('Failed to initialize schema', { cause: String(err) });
