@@ -213,7 +213,7 @@ There are two moving parts:
 
 2. **Your AI agent** — Claude Code, Codex, Cursor, or any MCP-compatible client. Once connected, it calls Specter-tree tools during the conversation instead of reading raw files first.
 
-The key point: **the server and your AI agent are separate processes.** The client launches the server, and the agent then binds it to the current workspace root using `set_project_root`.
+The key point: **the server and your AI agent are separate processes.** The MCP client launches a dedicated server process for the session. Each agent session has its own process and its own index — sessions never share state. The agent then binds that process to the current workspace root using `set_project_root`.
 
 ```mermaid
 flowchart TB
@@ -361,6 +361,32 @@ Reduction           63%                 54%
 
 ---
 
+## Frequently Asked Questions
+
+**Can two projects share one server?**
+
+No — and that is by design. The MCP stdio transport is a one-to-one pipe: one agent session launches one server process. If you have Claude Code open on project A and Cursor open on project B, each spawns its own `bun run src/index.ts` process with its own index. They never share state.
+
+If you switch projects within the same session, call `set_project_root` again. The server wipes the old index, scans the new root, and replaces all services atomically. In-flight queries against the old root finish before the swap takes effect.
+
+**Where does the index live?**
+
+Each project stores its own index at `{project_root}/.tsa/index.db`. The directory is created automatically on first scan and wiped clean on every `set_project_root` call. It is generated output — add `.tsa/` to your `.gitignore` and do not commit it.
+
+**How do I switch projects mid-session?**
+
+Call `set_project_root("/path/to/other-project")`. The server closes the current binding, scans the new root, and is ready in the same time as a cold start. Your agent does not need to reconnect.
+
+**Does it work with my agent?**
+
+Tested with: Claude Code, Codex CLI, Cursor, and any client that supports MCP stdio transport. If your agent can run `bun` and connect to an MCP stdio server, it works.
+
+**The index is stale — what do I do?**
+
+Call `flush_file(file_path)` after any edit to force an immediate re-index of that file, bypassing the 300ms debounce. For a full re-scan, call `index_project(root)`.
+
+---
+
 ## Limitations
 
 Specter-tree indexes **your project files only**. External packages in `node_modules` return no results — for those, fall back to grep. Both benchmark runs hit this when looking up methods from the MCP SDK.
@@ -371,9 +397,15 @@ The call graph is **best-effort, not exhaustive**. Known gaps:
 - Event emitters (string-based event names).
 - Dynamic dispatch (`obj[methodName]()`).
 - Higher-order functions and callbacks.
-- Re-exports through barrel files.
+- Calls routed through a passed-in parameter (e.g. `runtime.setProjectRoot(...)` where `runtime` is an argument).
 
-All call graph results include a `confidence` field: `direct`, `inferred`, or `weak`.
+All call graph results include a `confidence` field:
+
+| Value | Meaning |
+|---|---|
+| `direct` | A static call expression — the compiler can see it. High confidence. |
+| `inferred` | Resolved through a known pattern (e.g. interface implementation). Treat as likely but not certain. |
+| `weak` | Structural guess — same name, compatible signature. Verify before acting on it. |
 
 ---
 
