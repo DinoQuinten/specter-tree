@@ -1,0 +1,9 @@
+#!/bin/sh
+echo "Checking for duplicate functions/classes..."
+sh .husky/check-duplicates.sh
+if [ $? -ne 0 ]; then
+  echo "Duplicate code detected. Commit blocked."
+  exit 1
+fi
+echo "Pre-commit checks passed."
+exit 0
