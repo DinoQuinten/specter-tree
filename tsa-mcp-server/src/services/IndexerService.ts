@@ -80,9 +80,9 @@ export class IndexerService extends BaseService {
   }
 
   /**
-   * @description Re-indexes a single file: symbols plus outgoing references.
-   * Outgoing refs from this file are rebuilt; refs from other files pointing here
-   * remain valid because symbol IDs are stable after re-index.
+   * @description Re-indexes a single file's symbols, then rebuilds all project references.
+   * All project files' outgoing refs are re-resolved so inbound refs to this file stay
+   * accurate even when callers or implementors live in other files.
    * @param filePath - Absolute path of the file to re-index.
    * @returns Promise that resolves when re-indexing is complete.
    */

@@ -6,7 +6,7 @@
  * @module services
  */
 import { Project, SyntaxKind, type SourceFile, type CallExpression, type MethodDeclaration, type FunctionDeclaration, type Node, type NewExpression, type ClassDeclaration, type GetAccessorDeclaration, type SetAccessorDeclaration, type TypeReferenceNode, type Decorator } from 'ts-morph';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { BaseService } from './BaseService';
 import { IndexError } from '../errors/IndexError';
@@ -24,14 +24,21 @@ import type { TsaSymbol, NamedRef } from '../types/common';
  */
 export class ParserService extends BaseService {
   private readonly project: Project;
+  /** Tsconfig `compilerOptions.paths` mapping, or null when unavailable. */
+  private readonly pathsMap: Map<string, string[]> | null;
+  /** Absolute project root used for resolving paths alias targets. */
+  private readonly projectRoot: string | null;
 
   /**
    * @description Creates a ParserService backed by a ts-morph Project.
    * When tsConfigPath is provided the project inherits compiler options from that file;
    * otherwise strict defaults are applied.
+   * When projectRoot is provided and a tsconfig.json exists there, its `compilerOptions.paths`
+   * are loaded so that non-relative imports like `@/utils` can be resolved to file paths.
    * @param tsConfigPath - Optional absolute path to a tsconfig.json.
+   * @param projectRoot - Optional absolute path to the project root for paths-alias resolution.
    */
-  constructor(tsConfigPath?: string) {
+  constructor(tsConfigPath?: string, projectRoot?: string) {
     super('ParserService');
     this.project = new Project({
       ...(tsConfigPath ? { tsConfigFilePath: tsConfigPath } : {
@@ -40,6 +47,9 @@ export class ParserService extends BaseService {
       skipAddingFilesFromTsConfig: true,
       skipFileDependencyResolution: true
     });
+    const root = projectRoot ?? (tsConfigPath ? dirname(tsConfigPath) : null);
+    this.projectRoot = root;
+    this.pathsMap = root ? this.loadPathsMap(root) : null;
   }
 
   /**
@@ -251,20 +261,79 @@ export class ParserService extends BaseService {
   }
 
   /**
-   * @description Resolves a relative import specifier to an absolute .ts file path.
-   * Returns null for bare module specifiers (node_modules) or paths that cannot be resolved.
+   * @description Resolves an import specifier to an absolute .ts file path.
+   * Handles relative imports (./foo, ../bar) and tsconfig `paths` aliases (@/foo, ~/bar).
+   * Returns null for bare node_modules specifiers or paths that cannot be resolved on disk.
    * @param sourceFile - Absolute path of the importing file.
-   * @param specifier - The raw module specifier string (e.g. './utils' or '../types/common').
+   * @param specifier - The raw module specifier string (e.g. './utils', '@/services/auth').
    * @returns Resolved absolute file path, or null when unresolvable.
    */
   private resolveImportPath(sourceFile: string, specifier: string): string | null {
-    if (!specifier.startsWith('.')) return null;
-    const base = join(dirname(sourceFile), specifier);
-    for (const suffix of ['.ts', '/index.ts', '.tsx', '/index.tsx']) {
-      const full = base + suffix;
-      if (existsSync(full)) return full;
+    if (specifier.startsWith('.')) {
+      const base = join(dirname(sourceFile), specifier);
+      for (const suffix of ['.ts', '/index.ts', '.tsx', '/index.tsx']) {
+        const full = base + suffix;
+        if (existsSync(full)) return full;
+      }
+      return null;
+    }
+    return this.resolvePathAlias(specifier);
+  }
+
+  /**
+   * @description Resolves a non-relative specifier through the tsconfig `compilerOptions.paths` map.
+   * Supports wildcard aliases (`@/*`) and exact aliases (`@utils`).
+   * @param specifier - Non-relative module specifier to resolve.
+   * @returns Resolved absolute file path, or null when no alias matches or the file is absent.
+   */
+  private resolvePathAlias(specifier: string): string | null {
+    if (!this.pathsMap || !this.projectRoot) return null;
+    for (const [alias, targets] of this.pathsMap) {
+      if (alias.endsWith('/*')) {
+        const prefix = alias.slice(0, -1); // '@/'
+        if (!specifier.startsWith(prefix)) continue;
+        const rest = specifier.slice(prefix.length);
+        for (const target of targets) {
+          const base = target.endsWith('/*')
+            ? join(this.projectRoot, target.slice(0, -1), rest)
+            : join(this.projectRoot, target);
+          for (const suffix of ['.ts', '/index.ts', '.tsx', '/index.tsx', '']) {
+            const full = base + (suffix ? suffix : '');
+            if (existsSync(full)) return full;
+          }
+        }
+      } else if (specifier === alias) {
+        for (const target of targets) {
+          const base = join(this.projectRoot, target);
+          for (const suffix of ['.ts', '/index.ts', '.tsx', '/index.tsx', '']) {
+            const full = base + suffix;
+            if (existsSync(full)) return full;
+          }
+        }
+      }
     }
     return null;
+  }
+
+  /**
+   * @description Reads `compilerOptions.paths` from a tsconfig.json file.
+   * Returns an empty map when tsconfig is absent or has no paths.
+   * @param projectRoot - Absolute path to the directory containing tsconfig.json.
+   * @returns Map from alias pattern to array of target path templates.
+   */
+  private loadPathsMap(projectRoot: string): Map<string, string[]> {
+    const tsConfigPath = join(projectRoot, 'tsconfig.json');
+    if (!existsSync(tsConfigPath)) return new Map();
+    try {
+      const config = JSON.parse(readFileSync(tsConfigPath, 'utf-8')) as {
+        compilerOptions?: { paths?: Record<string, string[]> }
+      };
+      const paths = config.compilerOptions?.paths;
+      if (!paths) return new Map();
+      return new Map(Object.entries(paths));
+    } catch {
+      return new Map();
+    }
   }
 
   /**

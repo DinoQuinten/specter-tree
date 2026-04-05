@@ -92,13 +92,15 @@ export class ProjectRuntime {
       };
     }
 
+    // dbPathOverride is test-only — all roots share the same file when set.
+    // In production each root gets its own .tsa/index.db.
     const nextDbPath = this.dbPathOverride ?? join(projectRoot, '.tsa', 'index.db');
     const rawDb = getDatabase(nextDbPath);
     const db = new DatabaseService(rawDb);
     db.initialize();
     db.resetProjectData();
 
-    const parser = new ParserService();
+    const parser = new ParserService(undefined, projectRoot);
     const indexer = new IndexerService(db, parser);
     // Scan must complete before any service is constructed — services receive a populated db.
     // Old state remains live for in-flight calls during this await; state swap is atomic after.

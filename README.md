@@ -474,7 +474,7 @@ To add Fastify, Hono, Remix, Nuxt, or another framework:
 git clone https://github.com/DinoQuinten/specter-tree.git
 cd specter-tree/tsa-mcp-server
 bun install
-bun test              # 88 tests
+bun test              # 97 tests
 bun run typecheck     # type check, must exit clean
 bun run dev           # start the server
 ```
