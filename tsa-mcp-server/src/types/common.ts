@@ -106,10 +106,11 @@ export interface ToolError {
 export interface NamedRef {
   sourceName: string;
   sourceFile: string;
+  sourceParentName?: string | null;
   targetName: string;
   targetFile: string | null;
-  /** Subset of RefKind — type_ref and decorator are not yet extracted by ParserService. */
-  ref_kind: 'calls' | 'imports' | 'extends' | 'implements';
+  targetParentName?: string | null;
+  ref_kind: RefKind;
   source_line: number | null;
   confidence: 'direct' | 'inferred' | 'weak';
 }

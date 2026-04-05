@@ -39,3 +39,19 @@ describe('ConfigService — SvelteKit', () => {
     expect(result!.final_value).toBe('auto');
   });
 });
+
+describe('ConfigService — tsconfig.json', () => {
+  const svc = new ConfigService(join(FIXTURES, 'config-tsconfig-project'));
+
+  it('resolves compilerOptions from tsconfig.json', () => {
+    const result = svc.resolveConfig({ config_key: 'compilerOptions.target' });
+    expect(result).not.toBeNull();
+    expect(result!.final_value).toBe('ES2022');
+  });
+
+  it('resolves inherited compilerOptions from extends chain', () => {
+    const result = svc.resolveConfig({ config_key: 'compilerOptions.baseUrl' });
+    expect(result).not.toBeNull();
+    expect(result!.final_value).toBe('./src');
+  });
+});

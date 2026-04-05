@@ -53,8 +53,7 @@ export class IndexerService extends BaseService {
   async reindexFile(filePath: string): Promise<void> {
     const start = Date.now();
     await this.indexSymbols(filePath);
-    const knownNames = this.db.getAllSymbolNames();
-    this.indexRefs(filePath, knownNames);
+    this.rebuildProjectReferences();
     this.logInfo(LogEvents.INDEXER_FILE_CHANGED, { filePath, ms: Date.now() - start });
   }
 
@@ -106,14 +105,7 @@ export class IndexerService extends BaseService {
     }
 
     // Pass 2: references (all files — cross-file resolution requires all symbols present)
-    const knownNames = this.db.getAllSymbolNames();
-    for (const filePath of files) {
-      try {
-        this.indexRefs(filePath, knownNames);
-      } catch (err) {
-        this.logError(LogEvents.INDEXER_FILE_CHANGED, err, { filePath });
-      }
-    }
+    this.rebuildProjectReferences(files);
 
     this.logInfo(LogEvents.INDEXER_STARTED, { projectRoot, indexed, total: files.length });
   }
@@ -130,6 +122,7 @@ export class IndexerService extends BaseService {
     watcher.on('unlink', (rel) => {
       const abs = join(projectRoot, rel);
       this.db.deleteFileSymbols(abs);
+      this.db.deleteFileImports(abs);
       this.logInfo(LogEvents.INDEXER_FILE_DELETED, { filePath: abs });
     });
     return watcher;
@@ -156,6 +149,18 @@ export class IndexerService extends BaseService {
     this.db.deleteFileReferences(filePath);
     const namedRefs = this.parser.extractReferences(filePath, knownNames);
     this.db.resolveAndInsertNamedRefs(namedRefs);
+    this.db.replaceFileImports(filePath, this.parser.extractFileImports(filePath));
+  }
+
+  private rebuildProjectReferences(files: string[] = this.db.getAllFilePaths()): void {
+    const knownNames = this.db.getAllSymbolNames();
+    for (const filePath of files) {
+      try {
+        this.indexRefs(filePath, knownNames);
+      } catch (err) {
+        this.logError(LogEvents.INDEXER_FILE_CHANGED, err, { filePath });
+      }
+    }
   }
 
   private collectTypeScriptFiles(projectRoot: string): string[] {

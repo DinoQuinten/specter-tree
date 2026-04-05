@@ -1,5 +1,7 @@
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseService } from '../src/services/DatabaseService';
 import { ParserService } from '../src/services/ParserService';
@@ -74,5 +76,37 @@ describe('Integration: full index + query cycle', () => {
   test('get_related_files — utils.ts imports from animals.ts', () => {
     const result = referenceService.getRelatedFiles({ file_path: join(FIXTURE, 'src/utils.ts') });
     expect(result.imports_from.some((f: string) => f.includes('animals.ts'))).toBe(true);
+  });
+});
+
+describe('Integration: file-level relationships', () => {
+  let root: string;
+  let db: Database;
+  let dbService: DatabaseService;
+  let referenceService: ReferenceService;
+
+  beforeEach(async () => {
+    root = mkdtempSync(join(tmpdir(), 'tsa-file-rel-'));
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'setup.ts'), "export const boot = true;\n");
+    writeFileSync(join(root, 'side-effect.ts'), "import './setup';\nconsole.log('boot');\n");
+
+    db = new Database(':memory:');
+    dbService = new DatabaseService(db);
+    dbService.initialize();
+    const parser = new ParserService();
+    const indexer = new IndexerService(dbService, parser);
+    await indexer.scanProject(root);
+    referenceService = new ReferenceService(dbService);
+  });
+
+  afterAll(() => {
+    rmSync(root, { recursive: true, force: true });
+    db.close();
+  });
+
+  test('get_related_files includes side-effect imports even when the source file declares no symbols', () => {
+    const result = referenceService.getRelatedFiles({ file_path: join(root, 'side-effect.ts') });
+    expect(result.imports_from).toContain(join(root, 'setup.ts'));
   });
 });

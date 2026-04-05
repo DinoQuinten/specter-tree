@@ -55,6 +55,24 @@ describe('SymbolService', () => {
     expect(result.results.some(r => r.name === 'findUser')).toBe(true);
   });
 
+  it('getMethods aggregates duplicate class names across files', () => {
+    db.insertSymbols([
+      {
+        ...CLASS_SYM,
+        file_path: '/proj/src/admin-user.ts'
+      },
+      {
+        ...METHOD_SYM,
+        name: 'findAdminUser',
+        file_path: '/proj/src/admin-user.ts'
+      }
+    ]);
+
+    const result = svc.getMethods({ class_name: 'UserService' });
+    expect(result.results.some(r => r.name === 'findUser')).toBe(true);
+    expect(result.results.some(r => r.name === 'findAdminUser')).toBe(true);
+  });
+
   it('getFileSymbols returns all symbols in file', () => {
     const result = svc.getFileSymbols({ file_path: '/proj/src/user.ts' });
     expect(result.results.length).toBeGreaterThanOrEqual(1);

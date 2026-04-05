@@ -50,6 +50,15 @@ CREATE TABLE IF NOT EXISTS files (
   index_time_ms INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS file_imports (
+  source_file TEXT NOT NULL,
+  target_file TEXT NOT NULL,
+  PRIMARY KEY (source_file, target_file)
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_imports_source ON file_imports(source_file);
+CREATE INDEX IF NOT EXISTS idx_file_imports_target ON file_imports(target_file);
+
 CREATE TABLE IF NOT EXISTS project_meta (
   key   TEXT PRIMARY KEY,
   value TEXT

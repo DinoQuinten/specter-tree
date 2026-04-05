@@ -42,20 +42,29 @@ export class ReferenceService extends BaseService {
    */
   getCallers(input: GetCallersInput): ToolResult<CallerResult> {
     const start = Date.now();
-    const symbolRows = this.db.querySymbolsByName(input.symbol_name);
+    const symbolRows = input.class_name
+      ? this.db.querySymbolsByNameAndParent(input.symbol_name, input.class_name, 'method')
+      : this.db.querySymbolsByName(input.symbol_name);
     if (symbolRows.length === 0) {
       return { results: [], _meta: { count: 0, query_ms: Date.now() - start, correlationId: randomUUID() } };
     }
-    const target = symbolRows[0]!;
-    const rows = this.db.getCallers(target.id);
+    const rows = symbolRows.flatMap(target => this.db.getCallers(target.id));
+    const deduped = rows.filter((row, index, all) =>
+      all.findIndex(candidate =>
+        candidate.caller_name === row.caller_name &&
+        candidate.caller_file === row.caller_file &&
+        candidate.caller_line === row.caller_line &&
+        candidate.caller_class === row.caller_class
+      ) === index
+    );
     this.logDebug(LogEvents.TOOL_CALLED, { tool: 'get_callers', symbol: input.symbol_name });
     return {
-      results: rows.map(r => ({
+      results: deduped.map(r => ({
         caller_name: r.caller_name ?? 'unknown', caller_class: r.caller_class ?? null,
         caller_file: r.caller_file ?? 'unknown', line: r.caller_line ?? 0, confidence: r.confidence
       })),
       _warnings: ['Call graph is best-effort. DI, dynamic dispatch, and higher-order functions may be missing.'],
-      _meta: { count: rows.length, query_ms: Date.now() - start, correlationId: randomUUID() }
+      _meta: { count: deduped.length, query_ms: Date.now() - start, correlationId: randomUUID() }
     };
   }
 
@@ -69,11 +78,14 @@ export class ReferenceService extends BaseService {
     if (ifaceRows.length === 0) {
       return { results: [], _meta: { count: 0, query_ms: Date.now() - start, correlationId: randomUUID() } };
     }
-    const rows = this.db.getImplementors(ifaceRows[0]!.id);
+    const rows = ifaceRows.flatMap(iface => this.db.getImplementors(iface.id));
+    const deduped = rows.filter((row, index, all) =>
+      all.findIndex(candidate => candidate.class_name === row.class_name && candidate.file_path === row.file_path) === index
+    );
     this.logDebug(LogEvents.TOOL_CALLED, { tool: 'get_implementations', interface: input.interface_name });
     return {
-      results: rows.map(r => ({ class_name: r.class_name ?? 'unknown', file_path: r.file_path ?? 'unknown', line: 0 })),
-      _meta: { count: rows.length, query_ms: Date.now() - start, correlationId: randomUUID() }
+      results: deduped.map(r => ({ class_name: r.class_name ?? 'unknown', file_path: r.file_path ?? 'unknown', line: 0 })),
+      _meta: { count: deduped.length, query_ms: Date.now() - start, correlationId: randomUUID() }
     };
   }
 
@@ -87,12 +99,22 @@ export class ReferenceService extends BaseService {
     if (classRows.length === 0) {
       return { extends: [], implements: [], extended_by: [], implemented_by: [], _meta: { query_ms: Date.now() - start, correlationId: randomUUID() } };
     }
-    const data = this.db.getHierarchyData(classRows[0]!.id);
+    const merged = classRows.reduce((acc, row) => {
+      const data = this.db.getHierarchyData(row.id);
+      acc.extends.push(...data.extends);
+      acc.implements.push(...data.implements);
+      acc.extended_by.push(...data.extended_by);
+      acc.implemented_by.push(...data.implemented_by);
+      return acc;
+    }, { extends: [] as HierarchyEntry[], implements: [] as HierarchyEntry[], extended_by: [] as HierarchyEntry[], implemented_by: [] as HierarchyEntry[] });
     this.logDebug(LogEvents.TOOL_CALLED, { tool: 'get_hierarchy', class: input.class_name });
     const toEntry = (r: { name: string; file_path: string; line: number }): HierarchyEntry => ({ name: r.name, file_path: r.file_path, line: r.line });
+    const unique = (entries: HierarchyEntry[]): HierarchyEntry[] => entries.filter((entry, index, all) =>
+      all.findIndex(candidate => candidate.name === entry.name && candidate.file_path === entry.file_path && candidate.line === entry.line) === index
+    );
     return {
-      extends: data.extends.map(toEntry), implements: data.implements.map(toEntry),
-      extended_by: data.extended_by.map(toEntry), implemented_by: data.implemented_by.map(toEntry),
+      extends: unique(merged.extends.map(toEntry)), implements: unique(merged.implements.map(toEntry)),
+      extended_by: unique(merged.extended_by.map(toEntry)), implemented_by: unique(merged.implemented_by.map(toEntry)),
       _meta: { query_ms: Date.now() - start, correlationId: randomUUID() }
     };
   }

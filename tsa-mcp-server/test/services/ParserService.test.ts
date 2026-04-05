@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeAll } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ParserService } from '../../src/services/ParserService';
 
@@ -98,5 +100,48 @@ describe('ParserService — extractReferences', () => {
   it('returns empty array for file not in project', () => {
     const refs = parser.extractReferences('/nonexistent/file.ts', new Set());
     expect(refs).toHaveLength(0);
+  });
+});
+
+describe('ParserService — modern symbol/reference extraction', () => {
+  it('extracts getter and setter symbols plus decorator and type references', () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'tsa-parser-'));
+    const filePath = join(tempRoot, 'sample.ts');
+    writeFileSync(filePath, `function sealed() { return () => {}; }
+
+interface Person {
+  name: string;
+}
+
+@sealed()
+export class UserStore {
+  private _person: Person;
+
+  constructor(person: Person) {
+    this._person = person;
+  }
+
+  get person(): Person {
+    return this._person;
+  }
+
+  set person(value: Person) {
+    this._person = value;
+  }
+}
+`);
+
+    try {
+      const parser = new ParserService();
+      const symbols = parser.parseFile(filePath);
+      expect(symbols.some(s => s.kind === 'getter' && s.name === 'person')).toBe(true);
+      expect(symbols.some(s => s.kind === 'setter' && s.name === 'person')).toBe(true);
+
+      const refs = parser.extractReferences(filePath, new Set(['sealed', 'Person', 'UserStore']));
+      expect(refs.some(r => r.ref_kind === 'decorator' && r.targetName === 'sealed')).toBe(true);
+      expect(refs.some(r => r.ref_kind === 'type_ref' && r.targetName === 'Person')).toBe(true);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 });

@@ -113,6 +113,28 @@ export class DatabaseService extends BaseService {
     }
   }
 
+  querySymbolsByNameAndParent(name: string, parentName: string, kind?: string): SymbolRow[] {
+    try {
+      if (kind) {
+        return this.db.query(`
+          SELECT s.*
+          FROM symbols s
+          JOIN symbols p ON p.id = s.parent_id
+          WHERE s.name = ? AND s.kind = ? AND p.name = ? AND p.kind = 'class'
+        `).all(name, kind, parentName) as SymbolRow[];
+      }
+
+      return this.db.query(`
+        SELECT s.*
+        FROM symbols s
+        JOIN symbols p ON p.id = s.parent_id
+        WHERE s.name = ? AND p.name = ? AND p.kind = 'class'
+      `).all(name, parentName) as SymbolRow[];
+    } catch (err) {
+      throw new QueryError('Failed to query symbols by parent', { cause: String(err), name, parentName });
+    }
+  }
+
   /**
    * LIKE search for search_symbols tool.
    * @param query Partial name to match
@@ -137,10 +159,12 @@ export class DatabaseService extends BaseService {
    */
   getMethodsByClassName(className: string): SymbolRow[] {
     try {
-      const parent = this.db.query("SELECT id FROM symbols WHERE name = ? AND kind = 'class'")
-        .get(className) as { id: number } | null;
-      if (!parent) return [];
-      return this.db.query('SELECT * FROM symbols WHERE parent_id = ?').all(parent.id) as SymbolRow[];
+      return this.db.query(`
+        SELECT child.*
+        FROM symbols child
+        JOIN symbols parent ON parent.id = child.parent_id
+        WHERE parent.name = ? AND parent.kind = 'class'
+      `).all(className) as SymbolRow[];
     } catch (err) {
       throw new QueryError('Failed to get methods', { cause: String(err), className });
     }
@@ -244,11 +268,10 @@ export class DatabaseService extends BaseService {
    */
   getRelatedFiles(filePath: string): { imports_from: string[], imported_by: string[] } {
     try {
-      const ids = (this.db.query('SELECT id FROM symbols WHERE file_path = ?').all(filePath) as { id: number }[]).map(r => r.id);
-      if (ids.length === 0) return { imports_from: [], imported_by: [] };
-      const ph = ids.map(() => '?').join(',');
-      const importsFrom = (this.db.query(`SELECT DISTINCT s.file_path FROM "references" r JOIN symbols s ON s.id = r.target_symbol_id WHERE r.source_symbol_id IN (${ph}) AND r.ref_kind = 'imports' AND s.file_path != ?`).all(...ids, filePath) as { file_path: string }[]).map(r => r.file_path);
-      const importedBy = (this.db.query(`SELECT DISTINCT s.file_path FROM "references" r JOIN symbols s ON s.id = r.source_symbol_id WHERE r.target_symbol_id IN (${ph}) AND r.ref_kind = 'imports' AND s.file_path != ?`).all(...ids, filePath) as { file_path: string }[]).map(r => r.file_path);
+      const importsFrom = (this.db.query('SELECT target_file FROM file_imports WHERE source_file = ?').all(filePath) as { target_file: string }[])
+        .map(r => r.target_file);
+      const importedBy = (this.db.query('SELECT source_file FROM file_imports WHERE target_file = ?').all(filePath) as { source_file: string }[])
+        .map(r => r.source_file);
       return { imports_from: importsFrom, imported_by: importedBy };
     } catch (err) {
       throw new QueryError('Failed to get related files', { cause: String(err), filePath });
@@ -324,6 +347,29 @@ export class DatabaseService extends BaseService {
     }
   }
 
+  replaceFileImports(filePath: string, imports: string[]): void {
+    try {
+      this.db.run('DELETE FROM file_imports WHERE source_file = ?', [filePath]);
+      if (imports.length === 0) return;
+
+      const insert = this.db.prepare('INSERT OR IGNORE INTO file_imports (source_file, target_file) VALUES (?, ?)');
+      const tx = this.db.transaction((targets: string[]) => {
+        for (const target of targets) insert.run(filePath, target);
+      });
+      tx(imports);
+    } catch (err) {
+      throw new QueryError('Failed to replace file imports', { cause: String(err), filePath });
+    }
+  }
+
+  deleteFileImports(filePath: string): void {
+    try {
+      this.db.run('DELETE FROM file_imports WHERE source_file = ? OR target_file = ?', [filePath, filePath]);
+    } catch (err) {
+      throw new QueryError('Failed to delete file imports', { cause: String(err), filePath });
+    }
+  }
+
   /**
    * Resolve NamedRef[] to symbol IDs and insert into the references table.
    * sourceName='<file>' resolves to any symbol in sourceFile (for import edges).
@@ -334,21 +380,47 @@ export class DatabaseService extends BaseService {
     if (refs.length === 0) return;
     const tx = this.db.transaction((namedRefs: NamedRef[]) => {
       const insert          = this.db.prepare(`INSERT OR IGNORE INTO "references" (source_symbol_id, target_symbol_id, ref_kind, source_line, confidence) VALUES (?, ?, ?, ?, ?)`);
+      const insertFileImport = this.db.prepare('INSERT OR IGNORE INTO file_imports (source_file, target_file) VALUES (?, ?)');
       const srcByFile       = this.db.prepare('SELECT id FROM symbols WHERE file_path = ? LIMIT 1');
       const srcByName       = this.db.prepare('SELECT id FROM symbols WHERE name = ? AND file_path = ?');
-      const tgtByBoth       = this.db.prepare('SELECT id FROM symbols WHERE name = ? AND file_path = ?');
-      const tgtByName       = this.db.prepare('SELECT id FROM symbols WHERE name = ? LIMIT 1');
+      const srcByNameParent = this.db.prepare(`
+        SELECT s.id
+        FROM symbols s
+        JOIN symbols p ON p.id = s.parent_id
+        WHERE s.name = ? AND s.file_path = ? AND p.name = ? AND p.kind = 'class'
+      `);
+      const tgtByBothAll    = this.db.prepare('SELECT id FROM symbols WHERE name = ? AND file_path = ?');
+      const tgtByParent     = this.db.prepare(`
+        SELECT s.id
+        FROM symbols s
+        JOIN symbols p ON p.id = s.parent_id
+        WHERE s.name = ? AND s.file_path = ? AND p.name = ? AND p.kind = 'class'
+      `);
+      const tgtByNameAll    = this.db.prepare('SELECT id FROM symbols WHERE name = ?');
       let inserted = 0;
       for (const ref of namedRefs) {
         const source = (ref.sourceName === '<file>'
           ? srcByFile.get(ref.sourceFile)
-          : srcByName.get(ref.sourceName, ref.sourceFile)) as { id: number } | null;
+          : ref.sourceParentName
+            ? srcByNameParent.get(ref.sourceName, ref.sourceFile, ref.sourceParentName)
+            : srcByName.get(ref.sourceName, ref.sourceFile)) as { id: number } | null;
         if (!source) continue;
-        const target = (ref.targetFile
-          ? tgtByBoth.get(ref.targetName, ref.targetFile)
-          : tgtByName.get(ref.targetName)) as { id: number } | null;
+
+        let target: { id: number } | null = null;
+        if (ref.targetFile && ref.targetParentName) {
+          target = tgtByParent.get(ref.targetName, ref.targetFile, ref.targetParentName) as { id: number } | null;
+        } else if (ref.targetFile) {
+          const candidates = tgtByBothAll.all(ref.targetName, ref.targetFile) as { id: number }[];
+          target = candidates.length === 1 ? candidates[0]! : null;
+        } else {
+          const candidates = tgtByNameAll.all(ref.targetName) as { id: number }[];
+          target = candidates.length === 1 ? candidates[0]! : null;
+        }
         if (!target) continue;
         insert.run(source.id, target.id, ref.ref_kind, ref.source_line, ref.confidence);
+        if (ref.ref_kind === 'imports' && ref.targetFile) {
+          insertFileImport.run(ref.sourceFile, ref.targetFile);
+        }
         inserted++;
       }
       return inserted;

@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Project, SyntaxKind, type ObjectLiteralExpression, type PropertyAssignment } from 'ts-morph';
 import { BaseService } from './BaseService';
@@ -54,7 +54,9 @@ export class ConfigService extends BaseService {
       const filePath = join(this.projectRoot, candidate);
       if (!existsSync(filePath)) continue;
       try {
-        const value = this.extractFromFile(filePath, keyParts);
+        const value = candidate.endsWith('.json')
+          ? this.extractFromJsonFile(filePath, keyParts)
+          : this.extractFromFile(filePath, keyParts);
         if (value !== null) {
           this.logDebug(LogEvents.TOOL_CALLED, { tool: 'resolve_config', key: input.config_key, file: candidate });
           return {
@@ -83,6 +85,67 @@ export class ConfigService extends BaseService {
       if (result) return result;
     }
     return null;
+  }
+
+  private extractFromJsonFile(filePath: string, keyParts: string[]): { value: string; line: number } | null {
+    const parsed = this.loadJsonConfig(filePath);
+    const value = this.traverseJson(parsed, keyParts);
+    if (value === undefined) return null;
+    return { value: this.stringifyConfigValue(value), line: 1 };
+  }
+
+  private loadJsonConfig(filePath: string, visited: Set<string> = new Set()): Record<string, unknown> {
+    if (visited.has(filePath)) return {};
+    visited.add(filePath);
+
+    const current = JSON.parse(readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
+    const baseConfig = typeof current['extends'] === 'string'
+      ? this.loadJsonConfig(this.resolveExtendedConfig(filePath, current['extends']), visited)
+      : {};
+
+    const merged = this.deepMerge(baseConfig, current);
+    delete merged['extends'];
+    return merged;
+  }
+
+  private resolveExtendedConfig(filePath: string, extendRef: string): string {
+    if (extendRef.endsWith('.json')) return join(dirname(filePath), extendRef);
+    return join(dirname(filePath), `${extendRef}.json`);
+  }
+
+  private traverseJson(current: unknown, keyParts: string[]): unknown {
+    let value = current;
+    for (const key of keyParts) {
+      if (!value || typeof value !== 'object' || Array.isArray(value) || !(key in value)) return undefined;
+      value = (value as Record<string, unknown>)[key];
+    }
+    return value;
+  }
+
+  private stringifyConfigValue(value: unknown): string {
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    return JSON.stringify(value);
+  }
+
+  private deepMerge(base: Record<string, unknown>, override: Record<string, unknown>): Record<string, unknown> {
+    const merged: Record<string, unknown> = { ...base };
+    for (const [key, value] of Object.entries(override)) {
+      const existing = merged[key];
+      if (
+        value &&
+        typeof value === 'object' &&
+        !Array.isArray(value) &&
+        existing &&
+        typeof existing === 'object' &&
+        !Array.isArray(existing)
+      ) {
+        merged[key] = this.deepMerge(existing as Record<string, unknown>, value as Record<string, unknown>);
+      } else {
+        merged[key] = value;
+      }
+    }
+    return merged;
   }
 
   private findObjectLiteral(node: unknown): ObjectLiteralExpression | null {

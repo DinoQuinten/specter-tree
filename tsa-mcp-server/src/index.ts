@@ -10,6 +10,7 @@ import { ConfigService } from './services/ConfigService';
 import { startServer } from './server';
 import { logger } from './logging/logger';
 import { LogEvents } from './logging/logEvents';
+import { logQueue } from './logging/logQueue';
 
 async function main(): Promise<void> {
   const env = validateEnv();
@@ -30,14 +31,15 @@ async function main(): Promise<void> {
 
   const watcher = indexer.startWatcher(env.TSA_PROJECT_ROOT);
 
-  process.on('SIGINT', async () => {
+  const shutdown = async (): Promise<void> => {
+    logger.info({ event: LogEvents.SERVER_SHUTDOWN });
     await watcher.close();
+    logQueue.destroy();
     process.exit(0);
-  });
-  process.on('SIGTERM', async () => {
-    await watcher.close();
-    process.exit(0);
-  });
+  };
+
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 
   await startServer({ db: dbService, indexer, symbols, references, framework, config });
 }

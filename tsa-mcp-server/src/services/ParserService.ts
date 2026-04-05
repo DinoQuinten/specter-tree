@@ -1,4 +1,4 @@
-import { Project, SyntaxKind, type SourceFile, type CallExpression, type MethodDeclaration, type FunctionDeclaration, type Node, type NewExpression } from 'ts-morph';
+import { Project, SyntaxKind, type SourceFile, type CallExpression, type MethodDeclaration, type FunctionDeclaration, type Node, type NewExpression, type ClassDeclaration, type GetAccessorDeclaration, type SetAccessorDeclaration, type TypeReferenceNode, type Decorator } from 'ts-morph';
 import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { BaseService } from './BaseService';
@@ -80,7 +80,9 @@ export class ParserService extends BaseService {
         if (!firstName) continue;
         refs.push({
           sourceName: '<file>', sourceFile: filePath,
+          sourceParentName: null,
           targetName: firstName, targetFile: resolved,
+          targetParentName: null,
           ref_kind: 'imports', source_line: imp.getStartLineNumber(), confidence: 'direct'
         });
       }
@@ -93,7 +95,9 @@ export class ParserService extends BaseService {
           const baseName = baseClass.getName() ?? '';
           refs.push({
             sourceName: className, sourceFile: filePath,
+            sourceParentName: null,
             targetName: baseName, targetFile: importMap.get(baseName) ?? null,
+            targetParentName: null,
             ref_kind: 'extends', source_line: cls.getStartLineNumber(), confidence: 'direct'
           });
         }
@@ -101,7 +105,9 @@ export class ParserService extends BaseService {
           const ifaceName = impl.getExpression().getText();
           refs.push({
             sourceName: className, sourceFile: filePath,
+            sourceParentName: null,
             targetName: ifaceName, targetFile: importMap.get(ifaceName) ?? null,
+            targetParentName: null,
             ref_kind: 'implements', source_line: cls.getStartLineNumber(), confidence: 'direct'
           });
         }
@@ -111,11 +117,14 @@ export class ParserService extends BaseService {
       for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression) as CallExpression[]) {
         const calleeName = this.getCalleeName(call);
         if (!calleeName || !knownSymbolNames.has(calleeName)) continue;
-        const enclosing = this.getEnclosingName(call);
+        const enclosing = this.getEnclosingContext(call);
         if (!enclosing) continue;
+        const targetFile = importMap.get(calleeName) ?? this.resolveLocalTargetFile(sourceFile, filePath, calleeName);
         refs.push({
-          sourceName: enclosing, sourceFile: filePath,
-          targetName: calleeName, targetFile: importMap.get(calleeName) ?? null,
+          sourceName: enclosing.name, sourceFile: filePath,
+          sourceParentName: enclosing.parentClassName,
+          targetName: calleeName, targetFile,
+          targetParentName: enclosing.isThisCall ? enclosing.parentClassName : null,
           ref_kind: 'calls', source_line: call.getStartLineNumber(), confidence: 'direct'
         });
       }
@@ -124,12 +133,50 @@ export class ParserService extends BaseService {
       for (const newExpr of sourceFile.getDescendantsOfKind(SyntaxKind.NewExpression) as NewExpression[]) {
         const calleeName = newExpr.getExpression().getText();
         if (!knownSymbolNames.has(calleeName)) continue;
-        const enclosing = this.getEnclosingName(newExpr);
+        const enclosing = this.getEnclosingContext(newExpr);
         if (!enclosing) continue;
         refs.push({
-          sourceName: enclosing, sourceFile: filePath,
-          targetName: calleeName, targetFile: importMap.get(calleeName) ?? null,
+          sourceName: enclosing.name, sourceFile: filePath,
+          sourceParentName: enclosing.parentClassName,
+          targetName: calleeName, targetFile: importMap.get(calleeName) ?? this.resolveLocalTargetFile(sourceFile, filePath, calleeName),
+          targetParentName: null,
           ref_kind: 'calls', source_line: newExpr.getStartLineNumber(), confidence: 'direct'
+        });
+      }
+
+      for (const decorator of sourceFile.getDescendantsOfKind(SyntaxKind.Decorator) as Decorator[]) {
+        const decoratorName = this.getDecoratorName(decorator);
+        if (!decoratorName || !knownSymbolNames.has(decoratorName)) continue;
+        const enclosing = this.getEnclosingContext(decorator);
+        if (!enclosing) continue;
+        refs.push({
+          sourceName: enclosing.name,
+          sourceFile: filePath,
+          sourceParentName: enclosing.parentClassName,
+          targetName: decoratorName,
+          targetFile: importMap.get(decoratorName) ?? this.resolveLocalTargetFile(sourceFile, filePath, decoratorName),
+          targetParentName: null,
+          ref_kind: 'decorator',
+          source_line: decorator.getStartLineNumber(),
+          confidence: 'direct'
+        });
+      }
+
+      for (const typeRef of sourceFile.getDescendantsOfKind(SyntaxKind.TypeReference) as TypeReferenceNode[]) {
+        const typeName = typeRef.getTypeName().getText().split('.').pop() ?? null;
+        if (!typeName || !knownSymbolNames.has(typeName)) continue;
+        const enclosing = this.getEnclosingContext(typeRef);
+        if (!enclosing) continue;
+        refs.push({
+          sourceName: enclosing.name,
+          sourceFile: filePath,
+          sourceParentName: enclosing.parentClassName,
+          targetName: typeName,
+          targetFile: importMap.get(typeName) ?? this.resolveLocalTargetFile(sourceFile, filePath, typeName),
+          targetParentName: null,
+          ref_kind: 'type_ref',
+          source_line: typeRef.getStartLineNumber(),
+          confidence: 'direct'
         });
       }
 
@@ -137,6 +184,25 @@ export class ParserService extends BaseService {
       return refs;
     } catch (err) {
       throw new IndexError(`Failed to extract references from ${filePath}`, { cause: String(err), filePath });
+    }
+  }
+
+  extractFileImports(filePath: string): string[] {
+    try {
+      let sourceFile = this.project.getSourceFile(filePath);
+      if (!sourceFile) {
+        if (!existsSync(filePath)) return [];
+        sourceFile = this.project.addSourceFileAtPath(filePath);
+      }
+
+      const imports = new Set<string>();
+      for (const imp of sourceFile.getImportDeclarations()) {
+        const resolved = this.resolveImportPath(filePath, imp.getModuleSpecifierValue());
+        if (resolved) imports.add(resolved);
+      }
+      return [...imports];
+    } catch (err) {
+      throw new IndexError(`Failed to extract file imports from ${filePath}`, { cause: String(err), filePath });
     }
   }
 
@@ -176,15 +242,39 @@ export class ParserService extends BaseService {
     return null;
   }
 
-  /** Walk ancestors to find the enclosing named function or method. Returns null for module-level code. */
-  private getEnclosingName(node: Node): string | null {
+  private getEnclosingContext(node: Node): { name: string; parentClassName: string | null; isThisCall: boolean } | null {
+    const parentClass = node.getFirstAncestorByKind(SyntaxKind.ClassDeclaration) as ClassDeclaration | undefined;
+    const parentClassName = parentClass?.getName() ?? null;
+    const isThisCall = node.getText().includes('this.');
+
     for (const ancestor of node.getAncestors()) {
       const kind = ancestor.getKindName();
-      if (kind === 'MethodDeclaration') return (ancestor as MethodDeclaration).getName();
-      if (kind === 'FunctionDeclaration') return (ancestor as FunctionDeclaration).getName() ?? null;
-      if (kind === 'Constructor') return 'constructor';
+      if (kind === 'MethodDeclaration') return { name: (ancestor as MethodDeclaration).getName(), parentClassName, isThisCall };
+      if (kind === 'GetAccessor') return { name: (ancestor as GetAccessorDeclaration).getName(), parentClassName, isThisCall };
+      if (kind === 'SetAccessor') return { name: (ancestor as SetAccessorDeclaration).getName(), parentClassName, isThisCall };
+      if (kind === 'FunctionDeclaration') {
+        const functionName = (ancestor as FunctionDeclaration).getName();
+        if (!functionName) continue;
+        return { name: functionName, parentClassName, isThisCall };
+      }
+      if (kind === 'Constructor') return { name: 'constructor', parentClassName, isThisCall };
+      if (kind === 'ClassDeclaration') return { name: (ancestor as ClassDeclaration).getName() ?? '<anonymous>', parentClassName: null, isThisCall };
     }
     return null;
+  }
+
+  private resolveLocalTargetFile(sourceFile: SourceFile, filePath: string, symbolName: string): string | null {
+    const localMatch = sourceFile.getDescendants().some(node => {
+      const candidate = node as unknown as { getName?: () => string | undefined };
+      return typeof candidate.getName === 'function' && candidate.getName() === symbolName;
+    });
+    return localMatch ? filePath : null;
+  }
+
+  private getDecoratorName(decorator: Decorator): string | null {
+    const text = decorator.getExpression().getText();
+    const normalized = text.replace(/\(\)$/, '');
+    return normalized.split('.').pop() ?? null;
   }
 
   private extractClasses(sourceFile: SourceFile, filePath: string, symbols: TsaSymbol[]): void {
@@ -206,6 +296,30 @@ export class ParserService extends BaseService {
           return_type: method.getReturnType().getText(),
           params: method.getParameters().map(p => p.getText()).join(', '),
           doc_comment: this.getDoc(method), _parentName: name
+        });
+      }
+      for (const getter of cls.getGetAccessors()) {
+        symbols.push({
+          name: getter.getName(), kind: 'getter', file_path: filePath,
+          line: getter.getStartLineNumber(), column: 0, end_line: getter.getEndLineNumber(),
+          parent_id: null,
+          signature: getter.getText().split('\n')[0]!.trim().replace(/\s*\{$/, ''),
+          modifiers: this.getMods(getter),
+          return_type: getter.getReturnType().getText(),
+          params: null,
+          doc_comment: this.getDoc(getter), _parentName: name
+        });
+      }
+      for (const setter of cls.getSetAccessors()) {
+        symbols.push({
+          name: setter.getName(), kind: 'setter', file_path: filePath,
+          line: setter.getStartLineNumber(), column: 0, end_line: setter.getEndLineNumber(),
+          parent_id: null,
+          signature: setter.getText().split('\n')[0]!.trim().replace(/\s*\{$/, ''),
+          modifiers: this.getMods(setter),
+          return_type: null,
+          params: setter.getParameters().map(p => p.getText()).join(', '),
+          doc_comment: this.getDoc(setter), _parentName: name
         });
       }
       for (const ctor of cls.getConstructors()) {
