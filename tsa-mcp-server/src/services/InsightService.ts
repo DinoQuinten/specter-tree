@@ -516,7 +516,7 @@ export class InsightService extends BaseService {
     while (queue.length > 0) {
       const current = queue.shift()!;
       const callers = this.getOutboundTargets(current.row);
-      if (current.depth >= maxDepth || callers.length === 0) {
+      if (current.hops.length >= maxDepth || callers.length === 0) {
         results.push(current.hops);
         continue;
       }

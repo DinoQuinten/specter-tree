@@ -99,6 +99,71 @@ describe('InsightService', () => {
   });
 });
 
+// ── Edge cases ────────────────────────────────────────────────────────────────
+
+describe('InsightService — edge cases', () => {
+  let service: InsightService;
+
+  beforeAll(async () => {
+    const raw = new Database(':memory:');
+    const db = new DatabaseService(raw);
+    db.initialize();
+    const parser = new ParserService();
+    const indexer = new IndexerService(db, parser);
+    await indexer.scanProject(FIXTURE);
+    service = new InsightService(FIXTURE, db, new FrameworkService(FIXTURE));
+  });
+
+  // summarizeFileStructure
+  it('summarizeFileStructure throws for a non-existent file', () => {
+    expect(() => service.summarizeFileStructure({ file_path: '/does/not/exist.ts' })).toThrow();
+  });
+
+  // resolveExports
+  it('resolveExports returns null for an export name that does not exist in the barrel', () => {
+    const result = service.resolveExports({
+      file_path: join(FIXTURE, 'src/index.ts'),
+      export_name: 'nonExistentExport'
+    });
+    expect(result).toBeNull();
+  });
+
+  // findWriteTargets
+  it('findWriteTargets returns empty targets for an unknown symbol', () => {
+    const result = service.findWriteTargets({ symbol_name: 'totallyUnknownSymbol99' });
+    expect(result.targets).toHaveLength(0);
+    expect(result._meta.count).toBe(0);
+  });
+
+  // explainFlow — invalid entrypoint combinations
+  it('explainFlow throws when no entrypoint is provided', () => {
+    expect(() => service.explainFlow({})).toThrow();
+  });
+
+  it('explainFlow throws when more than one entrypoint is provided', () => {
+    expect(() => service.explainFlow({
+      symbol_name: 'makeGreeting',
+      file_path: join(FIXTURE, 'src/utils.ts')
+    })).toThrow();
+  });
+
+  // explainFlow — unknown inputs
+  it('explainFlow returns empty paths for an unknown symbol without throwing', () => {
+    const result = service.explainFlow({ symbol_name: 'totallyUnknownSymbol99' });
+    expect(result.paths).toHaveLength(0);
+    expect(result._meta.count).toBe(0);
+  });
+
+  // explain_flow — max_depth boundary
+  it('explainFlow clamps max_depth:1 to 1 without warnings', () => {
+    const result = service.explainFlow({ symbol_name: 'makeGreeting', max_depth: 1 });
+    expect(result._warnings).toBeUndefined();
+    for (const path of result.paths) {
+      expect(path.hops.length).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
 // ── Tier 2 ────────────────────────────────────────────────────────────────────
 
 describe('InsightService — find_write_targets scoring', () => {
@@ -187,19 +252,21 @@ describe('InsightService — explain_flow depth cap', () => {
 
 describe('InsightService — explain_flow route_path middleware ordering (Express)', () => {
   let service: InsightService;
+  // Computed once — three tests inspect different aspects of the same result.
+  let usersFlow: ReturnType<InsightService['explainFlow']>;
 
   beforeAll(() => {
     const raw = new Database(':memory:');
     const db = new DatabaseService(raw);
     db.initialize();
-    // No project scan needed — framework detection drives route_path behaviour
+    // No project scan needed — framework detection drives route_path behaviour.
     service = new InsightService(EXPRESS_FIXTURE, db, new FrameworkService(EXPRESS_FIXTURE));
+    usersFlow = service.explainFlow({ route_path: '/api/users' });
   });
 
   it('first hop is middleware, route_handler follows after all middleware', () => {
-    const result = service.explainFlow({ route_path: '/api/users' });
-    expect(result.paths.length).toBeGreaterThan(0);
-    const hops = result.paths[0]!.hops;
+    expect(usersFlow.paths.length).toBeGreaterThan(0);
+    const hops = usersFlow.paths[0]!.hops;
     const middlewareIdx = hops.findIndex(h => h.kind === 'middleware');
     const handlerIdx = hops.findIndex(h => h.kind === 'route_handler');
     expect(middlewareIdx).toBeGreaterThanOrEqual(0);
@@ -207,14 +274,12 @@ describe('InsightService — explain_flow route_path middleware ordering (Expres
   });
 
   it('named authMiddleware appears as a middleware hop', () => {
-    const result = service.explainFlow({ route_path: '/api/users' });
-    const hops = result.paths[0]!.hops;
+    const hops = usersFlow.paths[0]!.hops;
     expect(hops.some(h => h.kind === 'middleware' && h.name === 'authMiddleware')).toBe(true);
   });
 
   it('route_handler hop carries the handler function name', () => {
-    const result = service.explainFlow({ route_path: '/api/users' });
-    const handler = result.paths[0]!.hops.find(h => h.kind === 'route_handler');
+    const handler = usersFlow.paths[0]!.hops.find(h => h.kind === 'route_handler');
     expect(handler).toBeDefined();
     expect(handler!.name).toBe('getUsers');
   });
