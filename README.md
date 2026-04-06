@@ -1,4 +1,4 @@
-> Specter-Tree is a Model Context Protocol (MCP) server for TypeScript code navigation in AI coding tools. It reduces navigation token usage by 54–67% by replacing full-file reads with indexed symbol lookups.
+<!-- Specter-Tree is a Model Context Protocol (MCP) server for TypeScript code navigation in AI coding tools. It reduces navigation token usage by 54–67% by replacing full-file reads with indexed symbol lookups. -->
 
 <div align="center">
 
@@ -22,13 +22,17 @@
 
 ## Quick Install
 
-| Bun | npm |
-|---|---|
-| ```bash<br>git clone https://github.com/DinoQuinten/specter-tree.git<br>cd specter-tree/tsa-mcp-server<br>bun install<br>bun run dev<br>``` | `npm install`: not available yet<br>`npm run dev`: not available yet<br>`npx specter-tree`: not available yet<br><br>Bun is currently required to install and run this repo. |
+| | Bun | npm |
+|---|---|---|
+| Install | <code>git clone https://github.com/DinoQuinten/specter-tree.git</code><br><code>cd specter-tree/tsa-mcp-server</code><br><code>bun install</code> | Not available yet |
+| Run | <code>bun run dev</code> | Not available yet |
+| One-liner | <code>npx specter-tree</code> | Not available yet |
+
+Bun is currently required. npm packaging is planned but not yet available.
 
 Use Specter-Tree when you want a TypeScript MCP server that gives Claude Code, Cursor, or Codex exact symbol locations, call graph context, and file structure summaries with fewer file reads.
 
-npm packaging is planned, but this repository currently ships a Bun-first setup only.
+---
 
 ## What Changes During Debugging
 
@@ -40,6 +44,8 @@ npm packaging is planned, but this repository currently ships a Bun-first setup 
 | Read the right code | Often opens full files to locate 10–20 relevant lines | Reads only the exact lines around the result | Lower token usage per navigation step |
 | Debugging outcome | More grep, more scanning, more wasted reads | Targeted navigation with indexed results | 54–67% fewer navigation tokens per session |
 
+**Navigation benchmark — same task, measured twice:**
+
 | Navigation Benchmark | Grep + Read | Specter-Tree | Reduction |
 |---|---|---|---|
 | Simple task | 1350–1750 tok | 500–800 tok | 54–67% |
@@ -49,7 +55,7 @@ npm packaging is planned, but this repository currently ships a Bun-first setup 
 
 ## Before and After — How AI Agents Navigate Your TypeScript Code
 
-Your AI assistant wants to add a login check to `handleRequest`.
+Here is what a single debugging task actually looks like, token by token. Your AI assistant wants to add a login check to `handleRequest`.
 
 **Without Specter-Tree:**
 ```
@@ -81,6 +87,8 @@ Specter-Tree gives the agent an indexed map: every function, class, interface, c
 ---
 
 ## Structural Queries vs Grep — What Changes for Your Agent
+
+Every tool Specter-Tree provides maps directly to a debugging action you already do. Here is the feature-level comparison:
 
 | Capability | Native grep / glob / read | Specter-Tree MCP |
 |---|---|---|
