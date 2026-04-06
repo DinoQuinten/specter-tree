@@ -1,3 +1,5 @@
+> Specter-Tree is a Model Context Protocol (MCP) server for TypeScript code navigation in AI coding tools. It reduces navigation token usage by 54–67% by replacing full-file reads with indexed symbol lookups.
+
 <div align="center">
 
 # Specter-Tree: TypeScript MCP Server for AI Code Navigation
@@ -20,14 +22,28 @@
 
 ## Quick Install
 
-```bash
-git clone https://github.com/DinoQuinten/specter-tree.git
-cd specter-tree/tsa-mcp-server
-bun install
-bun run dev
-```
+| Bun | npm |
+|---|---|
+| ```bash<br>git clone https://github.com/DinoQuinten/specter-tree.git<br>cd specter-tree/tsa-mcp-server<br>bun install<br>bun run dev<br>``` | `npm install`: not available yet<br>`npm run dev`: not available yet<br>`npx specter-tree`: not available yet<br><br>Bun is currently required to install and run this repo. |
 
 Use Specter-Tree when you want a TypeScript MCP server that gives Claude Code, Cursor, or Codex exact symbol locations, call graph context, and file structure summaries with fewer file reads.
+
+npm packaging is planned, but this repository currently ships a Bun-first setup only.
+
+## What Changes During Debugging
+
+| Debugging task | Without Specter-Tree | With Specter-Tree | Result |
+|---|---|---|---|
+| Find a function | Grep multiple files and inspect likely matches | `find_symbol()` returns the exact file and line | Less searching and fewer wrong guesses |
+| Trace callers | Search references across files and read each candidate manually | `get_callers()` returns indexed callers directly | Faster debugging across call chains |
+| Inspect class hierarchy | Follow imports and inheritance by hand | `get_hierarchy()` returns the chain in one query | Structural context without manual traversal |
+| Read the right code | Often opens full files to locate 10–20 relevant lines | Reads only the exact lines around the result | Lower token usage per navigation step |
+| Debugging outcome | More grep, more scanning, more wasted reads | Targeted navigation with indexed results | 54–67% fewer navigation tokens per session |
+
+| Navigation Benchmark | Grep + Read | Specter-Tree | Reduction |
+|---|---|---|---|
+| Simple task | 1350–1750 tok | 500–800 tok | 54–67% |
+| Visual comparison | `████████████████████████████████` | `██████████████` | Fewer token-heavy reads |
 
 ---
 
@@ -107,6 +123,7 @@ curl -fsSL https://bun.sh/install | bash
 ```
 
 Specter-Tree works on macOS, Linux, and Windows (WSL or Git Bash).
+If you normally use npm, you still need Bun today because npm install/run support is not available yet.
 
 ---
 
@@ -498,6 +515,12 @@ Git hooks run on every commit and push:
 
 - **pre-commit:** Scans staged files for secrets and checks for duplicate symbols.
 - **pre-push:** Runs the full test suite and type check.
+
+---
+
+## Support
+
+Need help using Specter-Tree, want to propose a new MCP capability, or need custom TypeScript and MCP integration help for a team? See [SUPPORT.md](SUPPORT.md) for technical support, feature request guidance, and commercial inquiry details.
 
 ---
 
