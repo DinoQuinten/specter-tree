@@ -24,11 +24,11 @@
 
 | | Bun | npm |
 |---|---|---|
-| Install | <code>git clone https://github.com/DinoQuinten/specter-tree.git</code><br><code>cd specter-tree/tsa-mcp-server</code><br><code>bun install</code> | Not available yet |
+| Install | <code>git clone https://github.com/DinoQuinten/specter-tree.git</code><br><code>cd specter-tree/tsa-mcp-server</code><br><code>bun install</code> | <code>npm install</code> works once inside the repo, but Bun is still required to run the server |
 | Run | <code>bun run dev</code> | Not available yet |
-| One-liner | <code>npx specter-tree</code> | Not available yet |
+| One-liner | Not available yet | <code>npx specter-tree</code> — planned, not yet published |
 
-Bun is currently required. npm packaging is planned but not yet available.
+Bun is required to run the server. npm packaging is planned.
 
 Use Specter-Tree when you want a TypeScript MCP server that gives Claude Code, Cursor, or Codex exact symbol locations, call graph context, and file structure summaries with fewer file reads.
 
@@ -49,7 +49,7 @@ Use Specter-Tree when you want a TypeScript MCP server that gives Claude Code, C
 | Navigation Benchmark | Grep + Read | Specter-Tree | Reduction |
 |---|---|---|---|
 | Simple task | 1350–1750 tok | 500–800 tok | 54–67% |
-| Visual comparison | `████████████████████████████████` | `██████████████` | Fewer token-heavy reads |
+| Full breakdown | [See stage-by-stage data ↓](#benchmark--real-numbers-from-this-repo) | [See stage-by-stage data ↓](#benchmark--real-numbers-from-this-repo) | Run twice, opposite order |
 
 ---
 
