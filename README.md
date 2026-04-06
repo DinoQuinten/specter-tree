@@ -28,7 +28,8 @@
 | Run | <code>bun run dev</code> | Not available yet |
 | One-liner | Not available yet | <code>npx specter-tree</code> — planned, not yet published |
 
-Bun is required to run the server. npm packaging is planned.
+> [!IMPORTANT]
+> **Bun is required to run the server.** Install it from [bun.sh](https://bun.sh) before running any of the commands above. npm packaging is planned.
 
 Use Specter-Tree when you want a TypeScript MCP server that gives Claude Code, Cursor, or Codex exact symbol locations, call graph context, and file structure summaries with fewer file reads.
 
@@ -184,6 +185,9 @@ The agent will:
 
 That is the full setup. No env vars to set. No config files to edit by hand.
 
+> [!TIP]
+> Skip the manual paste — run `bun run dev --prompt | pbcopy` (macOS) or `bun run dev --prompt | clip` (Windows) to copy the exact config and agent prompt straight to your clipboard.
+
 ---
 
 ## What the Agent Gets
@@ -322,7 +326,8 @@ flowchart TB
 | Cold start | One-time scan | Two-pass; hash-skips unchanged files |
 | Project switch | On demand | `set_project_root` tears down old state and scans the new root |
 
-The index for each project lives at `{project_root}/.tsa/index.db` — created automatically, wiped on every bind. Add `.tsa/` to your `.gitignore`; it is generated output and should not be committed.
+> [!TIP]
+> Add `.tsa/` to your `.gitignore` — the index at `{project_root}/.tsa/index.db` is generated output and should not be committed. It is created automatically and wiped on every bind.
 
 ---
 
@@ -407,13 +412,17 @@ LARGE   map full inheritance, 15+ files
 
 These savings are specifically on navigation — the part that scales with codebase size. Specter-Tree does not cache, compress, or delegate to local models.
 
+> [!NOTE]
+> The biggest saving came from **partial reads**, not avoided wrong reads. `find_symbol` returns the exact line, so the agent reads 20 lines instead of a 126-line file. That single mechanism accounts for more than half the total saving.
+
 ---
 
 ## Limitations
 
 Specter-Tree indexes **your project files only**. External packages in `node_modules` return no results — fall back to grep for those.
 
-The call graph is **best-effort, not exhaustive**. Known gaps:
+> [!WARNING]
+> The call graph is **best-effort, not exhaustive**. Known gaps:
 
 - Dependency injection (`@Inject` providers).
 - Event emitters (string-based event names).
