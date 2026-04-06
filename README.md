@@ -464,6 +464,12 @@ In normal use the agent calls `set_project_root` after connecting. You do not ne
 
 ```mermaid
 erDiagram
+    FILES {
+        text path PK
+        int last_modified
+        text content_hash
+        int symbol_count
+    }
     SYMBOLS {
         int id PK
         text name
@@ -481,16 +487,10 @@ erDiagram
         text ref_kind
         text confidence
     }
-    FILES {
-        text path PK
-        int last_modified
-        text content_hash
-        int symbol_count
-    }
-    SYMBOLS ||--o{ SYMBOLS : "parent_id (class > method)"
+    FILES ||--o{ SYMBOLS : "file_path"
     SYMBOLS ||--o{ REFERENCES : "source (caller)"
     SYMBOLS ||--o{ REFERENCES : "target (callee)"
-    FILES ||--o{ SYMBOLS : "file_path"
+    SYMBOLS ||--o{ SYMBOLS : "parent_id (class > method)"
 ```
 
 SQLite B+trees for all storage. Lookups are O(log n) — typically 3–4 page reads for 5,000 symbols, sub-millisecond. The call graph uses an adjacency list so writes are O(1) per edge. Multi-hop traversals use recursive CTEs.
