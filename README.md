@@ -1,20 +1,33 @@
 <div align="center">
 
-# Specter-Tree — Reduce Claude Code Token Usage by 54–67%
+# Specter-Tree: TypeScript MCP Server for AI Code Navigation
 
-**Your AI assistant stops guessing where code lives.**
+**Find symbols, trace callers, and map hierarchies without token-heavy file reads.**
 
 *It asks once. Gets the exact file and line. Reads only what it needs.*
 
-**Specter-Tree** is an open-source MCP server for web engineers using Claude Code, Cursor, or Codex CLI. When you're debugging, your agent queries by symbol name and gets the exact file and line — no full-file reads, no wrong guesses. Built for TypeScript projects, it cuts navigation token usage by 54–67% per session.
+**Specter-Tree** is an open-source TypeScript MCP server for AI code navigation in Claude Code, Cursor, and Codex CLI. Your agent can search symbols, trace callers, inspect class hierarchies, and resolve exact file-and-line targets instead of grepping and reading whole files. Built for web engineers working in TypeScript codebases, it reduces navigation token usage by 54–67% per session.
 
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE.md)
 [![Runtime: Bun](https://img.shields.io/badge/Runtime-Bun-f472b6.svg)](https://bun.sh)
 [![Protocol: MCP](https://img.shields.io/badge/Protocol-MCP-8b5cf6.svg)](https://modelcontextprotocol.io)
-[![TypeScript](https://img.shields.io/badge/TypeScript-100%25-3178c6.svg)]()
+[![TypeScript](https://img.shields.io/badge/TypeScript-100%25-3178c6.svg)](https://www.typescriptlang.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 </div>
+
+---
+
+## Quick Install
+
+```bash
+git clone https://github.com/DinoQuinten/specter-tree.git
+cd specter-tree/tsa-mcp-server
+bun install
+bun run dev
+```
+
+Use Specter-Tree when you want a TypeScript MCP server that gives Claude Code, Cursor, or Codex exact symbol locations, call graph context, and file structure summaries with fewer file reads.
 
 ---
 

@@ -2,6 +2,14 @@
   "name": "specter-tree",
   "version": "0.1.0",
   "description": "TypeScript code navigation MCP server — AI agents find symbols, callers, and hierarchies by name instead of reading files. Reduces Claude Code token usage 54–67%. Works with Claude Code, Cursor, and Codex.",
+  "homepage": "https://github.com/DinoQuinten/specter-tree",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DinoQuinten/specter-tree.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DinoQuinten/specter-tree/issues"
+  },
   "keywords": [
     "mcp",
     "mcp-server",
@@ -9,15 +17,18 @@
     "typescript",
     "ast",
     "claude-code",
-    "cursor",
-    "codex",
+    "cursor-ai",
+    "codex-cli",
     "token-optimization",
     "ai-agent",
     "code-navigation",
     "symbol-search",
     "llm-tools",
+    "call-graph",
     "codebase-intelligence",
+    "developer-productivity",
     "reduce-tokens",
+    "typescript-mcp",
     "bun"
   ],
   "license": "AGPL-3.0-only",

@@ -1,0 +1,28 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1280" height="640" fill="#0B1320"/>
+  <rect x="40" y="40" width="1200" height="560" rx="28" fill="url(#bg)"/>
+  <circle cx="1060" cy="150" r="150" fill="#1D9E75" fill-opacity="0.15"/>
+  <circle cx="1140" cy="520" r="220" fill="#3178C6" fill-opacity="0.18"/>
+  <rect x="92" y="108" width="188" height="44" rx="22" fill="#111B2E"/>
+  <text x="126" y="137" fill="#8BD6B8" font-family="Arial, sans-serif" font-size="24" font-weight="700">SPECTER-TREE</text>
+  <text x="92" y="230" fill="#F5F7FA" font-family="Arial, sans-serif" font-size="54" font-weight="700">
+    <tspan x="92" dy="0">TypeScript MCP Server</tspan>
+    <tspan x="92" dy="70">for AI Code Navigation</tspan>
+  </text>
+  <text x="92" y="364" fill="#C5D0E0" font-family="Arial, sans-serif" font-size="28">
+    <tspan x="92" dy="0">Find symbols. Trace callers. Cut token-heavy file reads.</tspan>
+    <tspan x="92" dy="42">Built for Claude Code, Cursor, and Codex CLI.</tspan>
+  </text>
+  <rect x="92" y="454" width="268" height="64" rx="18" fill="#111B2E"/>
+  <text x="126" y="496" fill="#F5F7FA" font-family="Arial, sans-serif" font-size="28" font-weight="700">find_symbol()</text>
+  <rect x="382" y="454" width="244" height="64" rx="18" fill="#111B2E"/>
+  <text x="416" y="496" fill="#F5F7FA" font-family="Arial, sans-serif" font-size="28" font-weight="700">get_callers()</text>
+  <rect x="648" y="454" width="286" height="64" rx="18" fill="#111B2E"/>
+  <text x="682" y="496" fill="#F5F7FA" font-family="Arial, sans-serif" font-size="28" font-weight="700">explain_flow()</text>
+  <defs>
+    <linearGradient id="bg" x1="40" y1="40" x2="1240" y2="600" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0E1728"/>
+      <stop offset="1" stop-color="#13233D"/>
+    </linearGradient>
+  </defs>
+</svg>
