@@ -15,7 +15,10 @@ export function getQuickStartPrompt(serverPath: string, projectRoot: string): st
     mcpServers: {
       tsa: {
         command: 'bun',
-        args: ['run', serverPath]
+        args: ['run', serverPath],
+        env: {
+          TSA_PROJECT_ROOT: projectRoot
+        }
       }
     }
   }, null, 2);

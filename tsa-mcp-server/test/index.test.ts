@@ -6,7 +6,7 @@ const PROJECT_ROOT = '/projects/my-app';
 const prompt = getQuickStartPrompt(SERVER_PATH, PROJECT_ROOT);
 
 describe('quick-start prompt', () => {
-  it('embeds MCP config without TSA_PROJECT_ROOT in the default server config', () => {
+  it('embeds MCP config with TSA_PROJECT_ROOT baked in so agents work without calling set_project_root', () => {
     const start = prompt.indexOf('{\n  "mcpServers"');
     expect(start).toBeGreaterThan(-1);
 
@@ -26,7 +26,7 @@ describe('quick-start prompt', () => {
 
     expect(config.mcpServers.tsa.command).toBe('bun');
     expect(config.mcpServers.tsa.args).toContain(SERVER_PATH);
-    expect(config.mcpServers.tsa.env).toBeUndefined();
+    expect(config.mcpServers.tsa.env?.TSA_PROJECT_ROOT).toBe(PROJECT_ROOT);
   });
 
   it('tells the agent to set the project root to the current workspace before navigation', () => {
