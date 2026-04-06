@@ -24,11 +24,11 @@
 
 | | Bun | npm |
 |---|---|---|
-| Install | <code>git clone https://github.com/DinoQuinten/specter-tree.git</code><br><code>cd specter-tree/tsa-mcp-server</code><br><code>bun install</code> | <code>git clone https://github.com/DinoQuinten/specter-tree.git</code><br><code>cd specter-tree/tsa-mcp-server</code><br><code>npm install</code> |
-| Run | <code>bun run dev</code> | <code>npm run dev</code> |
+| Install | <code>git clone https://github.com/DinoQuinten/specter-tree.git</code><br><code>cd specter-tree/tsa-mcp-server</code><br><code>bun install</code> | <code>npm install</code> works once inside the repo, but Bun is still required to run the server |
+| Run | <code>bun run dev</code> | Not available yet |
 | One-liner | Not available yet | <code>npx specter-tree</code> — planned, not yet published |
 
-Bun must be installed on your system — npm scripts delegate to it internally.
+Bun is required to run the server. npm packaging is planned.
 
 Use Specter-Tree when you want a TypeScript MCP server that gives Claude Code, Cursor, or Codex exact symbol locations, call graph context, and file structure summaries with fewer file reads.
 
