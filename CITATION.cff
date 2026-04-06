@@ -1,6 +1,6 @@
 cff-version: 1.2.0
-title: "Specter-Tree: MCP Server for TypeScript Codebase Navigation"
-abstract: "An open-source Model Context Protocol (MCP) server that reduces LLM token usage by 54–67% when AI coding agents navigate TypeScript codebases. Agents query by symbol name and receive exact file and line numbers instead of reading whole files. Works with Claude Code, Cursor, and Codex CLI."
+title: "Specter-Tree: TypeScript Code Navigation MCP Server for AI Agents"
+abstract: "An open-source Model Context Protocol (MCP) server that gives AI coding agents structural awareness of TypeScript codebases. Agents find any symbol, trace callers, resolve barrel exports, and map class hierarchies by name — without reading whole files. This reduces navigation token usage by 54–67% per session. Works with Claude Code, Cursor, and Codex CLI."
 keywords:
   - MCP server
   - TypeScript

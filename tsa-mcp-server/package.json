@@ -1,7 +1,7 @@
 {
   "name": "specter-tree",
   "version": "0.1.0",
-  "description": "MCP server for TypeScript codebases. Reduces Claude Code token usage 54–67%. AI agents find symbols by name — no full-file reads.",
+  "description": "TypeScript code navigation MCP server — AI agents find symbols, callers, and hierarchies by name instead of reading files. Reduces Claude Code token usage 54–67%. Works with Claude Code, Cursor, and Codex.",
   "keywords": [
     "mcp",
     "mcp-server",

@@ -1,12 +1,12 @@
 <div align="center">
 
-# Specter-Tree — MCP Server for TypeScript Codebases
+# Specter-Tree — Reduce Claude Code Token Usage by 54–67%
 
 **Your AI assistant stops guessing where code lives.**
 
 *It asks once. Gets the exact file and line. Reads only what it needs.*
 
-**Specter-Tree** is an open-source MCP server that gives AI coding agents (Claude Code, Cursor, Codex CLI) a structural index of TypeScript codebases. Instead of reading whole files, agents query by symbol name and receive the exact file and line number — reducing LLM token usage by 54–67% per session.
+**Specter-Tree** is an open-source MCP server for web engineers using Claude Code, Cursor, or Codex CLI. When you're debugging, your agent queries by symbol name and gets the exact file and line — no full-file reads, no wrong guesses. Built for TypeScript projects, it cuts navigation token usage by 54–67% per session.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![Runtime: Bun](https://img.shields.io/badge/Runtime-Bun-f472b6.svg)](https://bun.sh)
@@ -18,7 +18,7 @@
 
 ---
 
-## How It Cuts Claude Code Token Usage by 54–67%
+## Before and After — How AI Agents Navigate Your TypeScript Code
 
 Your AI assistant wants to add a login check to `handleRequest`.
 
@@ -43,15 +43,15 @@ Same edit. Same result. **63% fewer tokens.**
 
 ---
 
-## What Is Token Optimization for AI Coding Agents?
+## Why Debugging With Claude Code Burns So Many Tokens
 
-When Claude Code, Cursor, or Codex CLI navigates a codebase, every file it reads consumes tokens from its context window. A typical debugging session — grep for a function, read 3 wrong files, read the right file in full — costs 1,350–1,750 tokens just for navigation. Specter-Tree eliminates that overhead by returning the exact file and line number for any symbol, so the agent reads 20 lines instead of a 126-line file.
+When you're debugging and Claude Code, Cursor, or Codex navigates a TypeScript project, it has no structural knowledge. It globs for file names, greps for strings, and reads entire files to find 20 lines. Every wrong guess burns tokens. Every full-file read where a partial read would suffice burns tokens.
 
-The result: the same edit at 54–67% lower token cost, every session. Savings compound as task complexity increases — making Specter-Tree most valuable when debugging large TypeScript projects with deep inheritance hierarchies or complex middleware chains.
+Specter-Tree gives the agent an indexed map: every function, class, interface, call site, and import relationship — pre-resolved and queryable in sub-millisecond time. The agent asks "where is handleRequest?" and gets `server.ts:111` instead of scanning 31 files. Debugging a deep call chain that would cost 4,800 tokens with grep costs 1,000 with Specter-Tree.
 
 ---
 
-## Specter-Tree vs Native Agent Tools (Claude Code, Cursor)
+## Structural Queries vs Grep — What Changes for Your Agent
 
 | Capability | Native grep / glob / read | Specter-Tree MCP |
 |---|---|---|
@@ -65,13 +65,13 @@ The result: the same edit at 54–67% lower token cost, every session. Savings c
 
 ---
 
-## Who Uses Specter-Tree — MCP Server for AI Coding Agents
+## Who Benefits
 
-- **AI agent users** — Claude Code, Codex CLI, Cursor. Your agent navigates code faster and makes fewer wrong reads.
-- **Tool builders** — Integrating an LLM into a dev workflow? Specter-Tree gives it structural awareness without feeding it whole files.
-- **Large codebase owners** — The bigger the project, the bigger the gap between grep and a structural query.
+- Web engineers debugging TypeScript projects with Claude Code, Codex CLI, or Cursor.
+- Teams building AI-assisted dev workflows that need structural code context.
+- Large TypeScript codebases where grep doesn't scale during debugging sessions.
 
-You do not need to understand ASTs or SQLite to use this. You paste one prompt, and your agent handles the rest. Any workflow that passes TypeScript codebase context to an LLM benefits from structural queries over full-file reads.
+You do not need to understand ASTs or SQLite to use this. You paste one prompt, and your agent handles the rest.
 
 ---
 
@@ -290,7 +290,15 @@ The index for each project lives at `{project_root}/.tsa/index.db` — created a
 
 ## Frequently Asked Questions — MCP Server Setup and Token Savings
 
-### Can two projects share one Specter-Tree MCP server?
+### How much does Specter-Tree reduce Claude Code token usage while debugging?
+
+54–67% per session in benchmarks run against this repo (31 TypeScript files). The biggest saving comes from partial reads: `find_symbol` returns the exact line, so the agent reads 20 lines instead of a 126-line file. Savings compound with debugging depth — tracing callers across 3 files saved 68%; mapping a full inheritance chain across 15 files saved 79%.
+
+### How do I set up an MCP server for TypeScript code navigation with Claude Code?
+
+Clone the repo, run `bun install`, then `bun run dev`. The server prints a ready-to-paste MCP config JSON and a one-line prompt. Paste the prompt into Claude Code — it adds the config and calls `set_project_root` automatically. Total setup: about 2 minutes.
+
+### Can two TypeScript projects share one Specter-Tree MCP server?
 
 No. The MCP stdio transport is a one-to-one pipe — one agent session, one server process, one index. If you have Claude Code on project A and Cursor on project B, each spawns its own process. They never share state.
 
@@ -302,7 +310,7 @@ Call `set_project_root("/path/to/other-project")`. The server wipes the old inde
 
 At `{project_root}/.tsa/index.db`. Created automatically, wiped on every bind. Add `.tsa/` to `.gitignore`.
 
-### Which AI coding agents work with this MCP server?
+### Which AI coding agents work with Specter-Tree to reduce token usage?
 
 Tested with Claude Code, Codex CLI, and Cursor. Any client that supports MCP stdio transport and can run `bun` will work.
 
@@ -310,13 +318,17 @@ Tested with Claude Code, Codex CLI, and Cursor. Any client that supports MCP std
 
 Call `flush_file(file_path)` after any edit to force an immediate re-index, bypassing the 300ms debounce. For a full re-scan, call `index_project(root)`.
 
+### Does Specter-Tree reduce tokens differently from caching or compression tools?
+
+Yes. Specter-Tree does not cache responses, compress prompts, or delegate to a local model. It reduces tokens specifically through structural navigation — the agent gets exact file and line numbers so it reads fewer lines. The 54–67% saving comes entirely from that mechanism. Caching and compression tools solve a different problem.
+
 ### Does it index `node_modules` or external packages?
 
 No. Only your project files are indexed. For external package symbols, fall back to grep.
 
 ---
 
-## Benchmark: Reducing LLM Token Usage in TypeScript Projects
+## Benchmark — Real Numbers From This Repo
 
 Run against this repository (31 TypeScript source files). Task: *add a startup greeting to the MCP server.* Run twice in opposite orders to eliminate first-run bias.
 
@@ -354,6 +366,8 @@ LARGE   map full inheritance, 15+ files
 ████████████████████████████████████████████████████████████████████████████████  4800 tok  Grep
 ████████████████                                                                 1000 tok  Specter-Tree    79% saved
 ```
+
+These savings are specifically on navigation — the part that scales with codebase size. Specter-Tree does not cache, compress, or delegate to local models.
 
 ---
 
